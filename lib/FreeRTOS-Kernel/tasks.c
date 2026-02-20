@@ -450,6 +450,16 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     #if ( configUSE_POSIX_ERRNO == 1 )
         int iTaskErrno;
     #endif
+
+    #if ( configUSE_EDF_SCHEDULER == 1 )
+        TickType_t xTaskPeriod; /**< The period of the task. */
+        TickType_t xTaskDeadline; /**< The relative deadline of the task. */
+        TickType_t xTaskComputationTime; /**< The computation time of the task. */
+        BaseType_t xTaskIsEDF; /**< Whether the task is scheduled using EDF or not. */
+
+        TickType_t xJobDeadline; /**< The absolute deadline of the current job. */
+        TickType_t xJobReleaseTime; /**< The release time of the current job. */
+    #endif
 } tskTCB;
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
@@ -479,6 +489,13 @@ PRIVILEGED_DATA static List_t xDelayedTaskList2;                         /**< De
 PRIVILEGED_DATA static List_t * volatile pxDelayedTaskList;              /**< Points to the delayed task list currently being used. */
 PRIVILEGED_DATA static List_t * volatile pxOverflowDelayedTaskList;      /**< Points to the delayed task list currently being used to hold tasks that have overflowed the current tick count. */
 PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Tasks that have been readied while the scheduler was suspended.  They will be moved to the ready list when the scheduler is resumed. */
+
+#if ( configUSE_MUTEXES == 1 )
+    PRIVILEGED_DATA static List_t xEDFReadyTasksList; /**< List of tasks ready to run in EDF mode, sorted by absolute deadline. */
+    // todo:
+    // - add a list of all tasks that are EDF tasks for admission control
+    // - add a list of number of EDF tasks for admission control
+#endif
 
 #if ( INCLUDE_vTaskDelete == 1 )
 
@@ -6099,6 +6116,12 @@ static void prvInitialiseTaskLists( void )
         vListInitialise( &xSuspendedTaskList );
     }
     #endif /* INCLUDE_vTaskSuspend */
+
+    #if ( configUSE_EDF_SCHEDULER == 1 )
+    {
+        vListInitialise( &xEDFReadyTasksList );
+    }
+    #endif /* configUSE_EDF_SCHEDULER */
 
     /* Start with pxDelayedTaskList using list1 and the pxOverflowDelayedTaskList
      * using list2. */
