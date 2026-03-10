@@ -533,6 +533,26 @@ typedef enum
                                                UBaseType_t uxCoreAffinityMask ) PRIVILEGED_FUNCTION;
 #endif
 
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    BaseType_t xTaskCreateEDF( TaskFunction_t pxTaskCode,
+                               const char * const pcName,
+                               const configSTACK_DEPTH_TYPE uxStackDepth,
+                               void * const pvParameters,
+                               UBaseType_t uxPriority,
+                               TaskHandle_t * const pxCreatedTask,
+                               TickType_t xComputationTime,
+                               TickType_t xPeriod,
+                               TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
+#endif /* configUSE_EDF_SCHEDULER */
+
+#if ( configUSE_EDF_DEADLINE_MISS_HOOK == 1 )
+    /* This is a hook function that will be called if a deadline is missed.
+     * It is up to the application writer to provide an implementation of this
+     * function. */
+    void vApplicationDeadlineMissedHook( TaskHandle_t xTask,
+                                         TickType_t xDeadline );
+#endif /* configUSE_EDF_DEADLINE_MISS_HOOK */
+
 /**
  * task. h
  * @code{c}

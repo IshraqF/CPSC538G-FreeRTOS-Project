@@ -53,6 +53,9 @@
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Synchronization Related */
+#define configUSE_EDF_SCHEDULER                 1
+#define configUSE_EDF_DEADLINE_MISS_HOOK        1
+
 #define configUSE_MUTEXES                       1
 #define configUSE_RECURSIVE_MUTEXES             1
 #define configUSE_APPLICATION_TASK_TAG          0
