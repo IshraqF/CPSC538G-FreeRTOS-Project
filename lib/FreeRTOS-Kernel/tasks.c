@@ -173,7 +173,128 @@
     #define taskRESERVED_TASK_NAME_LENGTH    1U
 #endif /* if ( ( configNUMBER_OF_CORES > 1 ) */
 
-#if ( configUSE_PORT_OPTIMISED_TASK_SELECTION == 0 )
+#if ( configUSE_EDF_SCHEDULER == 1 )
+
+static void prvSelectEDFTask( void )
+{
+    TCB_t *pxTCB, *pxEarliestTCB = NULL;
+    TickType_t xEarliestDeadline = portMAX_DELAY;
+    
+    // find highest populated priority queue
+    UBaseType_t uxTopPriority = uxTopReadyPriority;
+    while( listLIST_IS_EMPTY( &( pxReadyTasksLists[ uxTopPriority ] ) ) != pdFALSE )
+    {
+        configASSERT( uxTopPriority );
+        --uxTopPriority;
+    }
+
+    ListItem_t *pxIterator = listGET_HEAD_ENTRY( &( pxReadyTasksLists[ uxTopPriority ] ) );
+    const ListItem_t *pxEndMarker = listGET_END_MARKER( &( pxReadyTasksLists[ uxTopPriority ] ) );
+
+    // scan within this priority level for earliest deadline
+    while( pxIterator != pxEndMarker )
+    {
+        pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );
+        
+        // only apply EDF sorting to actual EDF tasks
+        if( pxTCB->xPeriod > 0 )
+        {
+            if( pxTCB->xAbsoluteDeadline < xEarliestDeadline )
+            {
+                xEarliestDeadline = pxTCB->xAbsoluteDeadline;
+                pxEarliestTCB = pxTCB;
+            }
+        }
+        pxIterator = listGET_NEXT( pxIterator );
+    }
+
+    // context switch
+    if( pxEarliestTCB != NULL )
+    {
+        pxCurrentTCB = pxEarliestTCB;
+        uxTopReadyPriority = uxTopPriority;
+    }
+    else
+    {
+        listGET_OWNER_OF_NEXT_ENTRY( pxCurrentTCB, &( pxReadyTasksLists[ uxTopPriority ] ) );
+        uxTopReadyPriority = uxTopPriority;
+    }
+}
+
+    #define taskSELECT_HIGHEST_PRIORITY_TASK() prvSelectEDFTask()
+
+    #define configMAX_EDF_TASKS      105
+    #define configEDF_PDA_MAX_TIME   10000 
+
+    typedef struct {
+        TickType_t C;
+        TickType_t T;
+        TickType_t D;
+    } EDF_Task_Param_t;
+    
+    static EDF_Task_Param_t xEDFTaskRegistry[ configMAX_EDF_TASKS ];
+    static UBaseType_t uxEDFTaskCount = 0;
+
+    static BaseType_t prvCheckEDFSchedulability( TickType_t C, TickType_t T, TickType_t D )
+    {
+        UBaseType_t i;
+        BaseType_t xIsImplicit = ( D == T ) ? pdTRUE : pdFALSE;
+        
+        // times 10000 to avoid floating point math
+        uint32_t ulTotalUtilization = ( C * 10000 ) / T;
+
+        for( i = 0; i < uxEDFTaskCount; i++ )
+        {
+            ulTotalUtilization += ( xEDFTaskRegistry[i].C * 10000 ) / xEDFTaskRegistry[i].T;
+            if ( xEDFTaskRegistry[i].D != xEDFTaskRegistry[i].T )
+            {
+                xIsImplicit = pdFALSE;
+            }
+        }
+
+        // LL bound aka U <= 1
+        if( ulTotalUtilization > 10000 )
+        {
+            return pdFALSE; 
+        }
+
+        // if all tasks have D == T, then LL bound is sufficient
+        if( xIsImplicit == pdTRUE )
+        {
+            return pdTRUE;
+        }
+
+        // pda for constrained deadlines (D <= T)
+        // h(t) = sum( floor((t - D)/T + 1) * C ) <= t
+        TickType_t t;
+        for( t = 1; t <= configEDF_PDA_MAX_TIME; t++ )
+        {
+            uint32_t ulDemand = 0;
+            
+            // demand of new task
+            if( t >= D ) {
+                ulDemand += ( ( ( t - D ) / T ) + 1 ) * C;
+            }
+            
+            // demand of existing tasks
+            for( i = 0; i < uxEDFTaskCount; i++ )
+            {
+                if( t >= xEDFTaskRegistry[i].D )
+                {
+                    ulDemand += ( ( ( t - xEDFTaskRegistry[i].D ) / xEDFTaskRegistry[i].T ) + 1 ) * xEDFTaskRegistry[i].C;
+                }
+            }
+
+            if( ulDemand > t )
+            {
+                return pdFALSE; // fails PDA
+            }
+        }
+
+        return pdTRUE;
+    }
+
+#elif ( configUSE_PORT_OPTIMISED_TASK_SELECTION == 0 )
 
 /* If configUSE_PORT_OPTIMISED_TASK_SELECTION is 0 then task selection is
  * performed in a generic way that is not optimised to any particular
@@ -449,6 +570,13 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
 
     #if ( configUSE_POSIX_ERRNO == 1 )
         int iTaskErrno;
+    #endif
+
+    #if ( configUSE_EDF_SCHEDULER == 1 )
+        TickType_t xComputationTime;
+        TickType_t xPeriod;
+        TickType_t xRelativeDeadline;
+        TickType_t xAbsoluteDeadline;
     #endif
 } tskTCB;
 
@@ -1774,6 +1902,110 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
         return xReturn;
     }
 /*-----------------------------------------------------------*/
+
+#if ( configUSE_EDF_SCHEDULER == 1 )
+
+    BaseType_t xTaskCreateEDF( TaskFunction_t pxTaskCode,
+                               const char * const pcName,
+                               const configSTACK_DEPTH_TYPE uxStackDepth,
+                               void * const pvParameters,
+                               UBaseType_t uxPriority,
+                               TaskHandle_t * const pxCreatedTask,
+                               TickType_t xComputationTime,
+                               TickType_t xPeriod,
+                               TickType_t xRelativeDeadline )
+    {
+        TCB_t * pxNewTCB;
+        BaseType_t xReturn;
+
+        // admission control -> mem alloc
+        if( prvCheckEDFSchedulability( xComputationTime, xPeriod, xRelativeDeadline ) == pdFALSE )
+        {
+            return errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY; 
+        }
+
+        pxNewTCB = prvCreateTask( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask );
+
+        if( pxNewTCB != NULL )
+        {
+            pxNewTCB->xComputationTime = xComputationTime;
+            pxNewTCB->xPeriod = xPeriod;
+            pxNewTCB->xRelativeDeadline = xRelativeDeadline;
+            pxNewTCB->xAbsoluteDeadline = xTickCount + xRelativeDeadline;
+
+            // register task in EDF global array
+            if( uxEDFTaskCount < configMAX_EDF_TASKS )
+            {
+                xEDFTaskRegistry[ uxEDFTaskCount ].C = xComputationTime;
+                xEDFTaskRegistry[ uxEDFTaskCount ].T = xPeriod;
+                xEDFTaskRegistry[ uxEDFTaskCount ].D = xRelativeDeadline;
+                uxEDFTaskCount++;
+            }
+
+            prvAddNewTaskToReadyList( pxNewTCB );
+            xReturn = pdPASS;
+        }
+        else
+        {
+            xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
+        }
+
+        return xReturn;
+    }
+
+    void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
+    {
+        TickType_t xTimeToWake;
+        BaseType_t xAlreadyYielded, xShouldDelay = pdFALSE;
+
+        configASSERT( pxPreviousWakeTime );
+
+        vTaskSuspendAll();
+        {
+            const TickType_t xConstTickCount = xTickCount;
+
+            // calculate wakeup time for task's next period
+            xTimeToWake = *pxPreviousWakeTime + pxCurrentTCB->xPeriod;
+
+            // check for tick overflow
+            if( xConstTickCount < *pxPreviousWakeTime )
+            {
+                if( ( xTimeToWake < *pxPreviousWakeTime ) && ( xTimeToWake > xConstTickCount ) )
+                {
+                    xShouldDelay = pdTRUE;
+                }
+            }
+            else
+            {
+                if( ( xTimeToWake < *pxPreviousWakeTime ) || ( xTimeToWake > xConstTickCount ) )
+                {
+                    xShouldDelay = pdTRUE;
+                }
+            }
+
+            // update wakuep
+            *pxPreviousWakeTime = xTimeToWake;
+
+            pxCurrentTCB->xAbsoluteDeadline = xTimeToWake + pxCurrentTCB->xRelativeDeadline;
+
+            if( xShouldDelay != pdFALSE )
+            {
+                // place task in blocked list until xTimeToWake
+                prvAddCurrentTaskToDelayedList( xTimeToWake - xConstTickCount, pdFALSE );
+            }
+        }
+        xAlreadyYielded = xTaskResumeAll();
+
+        // force context switch to let next EDF task run
+        if( xAlreadyYielded == pdFALSE )
+        {
+            taskYIELD_WITHIN_API();
+        }
+    }
+
+#endif /* configUSE_EDF_SCHEDULER */
+/*-----------------------------------------------------------*/
+
 
     #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
         BaseType_t xTaskCreateAffinitySet( TaskFunction_t pxTaskCode,
@@ -4759,6 +4991,20 @@ BaseType_t xTaskIncrementTick( void )
         /* Increment the RTOS tick, switching the delayed and overflowed
          * delayed lists if it wraps to 0. */
         xTickCount = xConstTickCount;
+
+        #if ( configUSE_EDF_SCHEDULER == 1 ) && ( configUSE_EDF_DEADLINE_MISS_HOOK == 1 )
+            // only proceed if this is an EDF task
+            if( ( pxCurrentTCB != NULL ) && ( pxCurrentTCB->xPeriod > 0 ) )
+            {
+                if( xConstTickCount > pxCurrentTCB->xAbsoluteDeadline )
+                {
+                    vApplicationDeadlineMissedHook( pxCurrentTCB, pxCurrentTCB->xAbsoluteDeadline );
+                    
+                    // push deadline to next period so no log spam
+                    pxCurrentTCB->xAbsoluteDeadline += pxCurrentTCB->xPeriod;
+                }
+            }
+        #endif
 
         if( xConstTickCount == ( TickType_t ) 0U )
         {

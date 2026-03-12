@@ -543,12 +543,12 @@ typedef enum
                                TickType_t xComputationTime,
                                TickType_t xPeriod,
                                TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
+
+    void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime );
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( configUSE_EDF_DEADLINE_MISS_HOOK == 1 )
-    /* This is a hook function that will be called if a deadline is missed.
-     * It is up to the application writer to provide an implementation of this
-     * function. */
+    // hook function to be called if a deadline is missed
     void vApplicationDeadlineMissedHook( TaskHandle_t xTask,
                                          TickType_t xDeadline );
 #endif /* configUSE_EDF_DEADLINE_MISS_HOOK */
