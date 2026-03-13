@@ -1873,6 +1873,10 @@ BaseType_t xQueueGenericReset( QueueHandle_t xQueue,
 UBaseType_t uxQueueGetQueueItemSize( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 UBaseType_t uxQueueGetQueueLength( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    void vQueueUpdateResourceCeiling( QueueHandle_t xQueue, UBaseType_t uxCeiling ) PRIVILEGED_FUNCTION;
+#endif
+
 /* *INDENT-OFF* */
 #ifdef __cplusplus
     }

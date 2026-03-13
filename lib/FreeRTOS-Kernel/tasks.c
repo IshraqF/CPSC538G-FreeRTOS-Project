@@ -577,6 +577,7 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
         TickType_t xPeriod;
         TickType_t xRelativeDeadline;
         TickType_t xAbsoluteDeadline;
+        UBaseType_t uxPreemptionLevel;
     #endif
 } tskTCB;
 
@@ -1933,6 +1934,10 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             pxNewTCB->xRelativeDeadline = xRelativeDeadline;
             pxNewTCB->xAbsoluteDeadline = xTickCount + xRelativeDeadline;
 
+            // set SRP preemption level as inverse of relative deadline */
+            /* Using UINT32_MAX (0xFFFFFFFF) assumes UBaseType_t is 32-bit */
+            pxNewTCB->uxPreemptionLevel = 0xFFFFFFFF - xRelativeDeadline;
+
             // register task in EDF global array
             if( uxEDFTaskCount < configMAX_EDF_TASKS )
             {
@@ -2002,6 +2007,44 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             taskYIELD_WITHIN_API();
         }
     }
+
+    #define configMAX_SRP_NESTING 16
+
+    static UBaseType_t uxSystemCeilingStack[ configMAX_SRP_NESTING ];
+    static UBaseType_t uxSystemCeilingIndex = 0;
+    static UBaseType_t uxCurrentSystemCeiling = 0;
+
+    void vPushSystemCeiling( UBaseType_t uxNewCeiling )
+    {
+        if ( uxSystemCeilingIndex < configMAX_SRP_NESTING ) {
+            uxSystemCeilingStack[ uxSystemCeilingIndex++ ] = uxCurrentSystemCeiling;
+            uxCurrentSystemCeiling = uxNewCeiling;
+            return;
+        }
+        printf("[JG] bad 1\n");
+    }
+
+    void vPopSystemCeiling( void )
+    {
+        configASSERT( uxSystemCeilingIndex > 0 );
+        if ( uxSystemCeilingIndex > 0 ) {
+            uxCurrentSystemCeiling = uxSystemCeilingStack[ --uxSystemCeilingIndex ];
+            return;
+        }
+        printf("[JG] bad 2\n");
+    }
+    
+    UBaseType_t uxGetSystemCeiling( void )
+    {
+        return uxCurrentSystemCeiling;
+    }
+
+    UBaseType_t uxTaskGetPreemptionLevel( TaskHandle_t xTask )
+    {
+        TCB_t *pxTCB = prvGetTCBFromHandle( xTask );
+        return pxTCB->uxPreemptionLevel;
+    }
+
 
 #endif /* configUSE_EDF_SCHEDULER */
 /*-----------------------------------------------------------*/

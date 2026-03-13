@@ -545,6 +545,14 @@ typedef enum
                                TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
 
     void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime );
+
+    // SRP stuff
+    void vPushSystemCeiling( UBaseType_t uxNewCeiling );
+    void vPopSystemCeiling( void );
+    UBaseType_t uxGetSystemCeiling( void );
+    UBaseType_t uxTaskGetPreemptionLevel( TaskHandle_t xTask );
+#endif
+
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( configUSE_EDF_DEADLINE_MISS_HOOK == 1 )

@@ -133,7 +133,26 @@ typedef struct QueueDefinition /* The old naming convention is used to prevent b
         UBaseType_t uxQueueNumber;
         uint8_t ucQueueType;
     #endif
+
+    #if ( configUSE_EDF_SCHEDULER == 1 )
+        UBaseType_t uxResourceCeiling; // stores highest preemption level of all tasks ever accessing this resource
+    #endif
 } xQUEUE;
+
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    void vQueueUpdateResourceCeiling( QueueHandle_t xQueue, UBaseType_t uxCeiling )
+    {
+        Queue_t * const pxQueue = xQueue;
+        configASSERT( pxQueue );
+        
+        taskENTER_CRITICAL();
+        {
+            pxQueue->uxResourceCeiling = uxCeiling;
+        }
+        taskEXIT_CRITICAL();
+    }
+#endif
+
 
 /* The old xQUEUE name is maintained above then typedefed to the new Queue_t
  * name below to enable the use of older kernel aware debuggers. */
