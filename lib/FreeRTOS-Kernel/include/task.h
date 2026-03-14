@@ -394,6 +394,27 @@ typedef enum
                             TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 #endif
 
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    BaseType_t xTaskCreateEDF( TaskFunction_t pxTaskCode,
+                               const char * const pcName,
+                               const configSTACK_DEPTH_TYPE uxStackDepth,
+                               void * const pvParameters,
+                               UBaseType_t uxPriority,
+                               TickType_t xPeriod,
+                               TickType_t xDeadline,
+                               TickType_t xWCET,
+                               TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+
+    /* Drain the deadline-miss ring buffer and print events via printf/UART. */
+    void vEDFDrainMissLog( void ) PRIVILEGED_FUNCTION;
+
+    /** Drain the context-switch ring buffer and print events via printf/UART. */
+    void vEDFDrainSwitchLog( void ) PRIVILEGED_FUNCTION;
+
+    /* Print a table of admitted EDF task parameters via printf/UART. */
+    void vEDFPrintStats( void ) PRIVILEGED_FUNCTION;
+#endif /* configUSE_EDF_SCHEDULER */
+
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
     BaseType_t xTaskCreateAffinitySet( TaskFunction_t pxTaskCode,
                                        const char * const pcName,
