@@ -413,6 +413,10 @@ typedef enum
 
     /* Print a table of admitted EDF task parameters via printf/UART. */
     void vEDFPrintStats( void ) PRIVILEGED_FUNCTION;
+
+    /* EDF-aware periodic delay, always update xJobReleaseTime and xJobDeadline
+     * so EDF ordering is correct at high utilization. */
+    void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )

@@ -6,7 +6,7 @@
 
 /* Select which test to run (1–7). */
 #ifndef TEST_CASE
-    #define TEST_CASE  3
+    #define TEST_CASE  2
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -52,7 +52,6 @@ static void vTask1( void * pvParams )
 {
     ( void ) pvParams;
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xPeriod = MS( 200 );
 
     for( ;; )
     {
@@ -60,7 +59,7 @@ static void vTask1( void * pvParams )
         TickType_t xStart = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xStart ) < MS( 100 ) ) { __asm volatile ( "nop" ); }
 
-        vTaskDelayUntil( &xLastWakeTime, xPeriod );
+        vTaskDelayEDF( &xLastWakeTime );
     }
 }
 
@@ -96,7 +95,7 @@ static void vTaskA( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 100 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -108,7 +107,7 @@ static void vTaskB( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 100 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 200 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -143,7 +142,7 @@ static void vEDFTask( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 30 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 100 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -192,7 +191,7 @@ static void vTaskAccepted( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 60 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 100 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -235,7 +234,8 @@ static void vOverrunTask( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 210 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 200 ) );
+        vEDFDrainMissLog();
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -273,7 +273,7 @@ static void vTask6A( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 20 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 300 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -285,7 +285,7 @@ static void vTask6B( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 30 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 200 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -297,7 +297,7 @@ static void vTask6C( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 400 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -335,7 +335,7 @@ static void vTask7A( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 3 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 10 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 
@@ -347,7 +347,7 @@ static void vTask7B( void * pvParams )
     {
         TickType_t xS = xTaskGetTickCount();
         while( ( xTaskGetTickCount() - xS ) < MS( 4 ) ) { __asm volatile ( "nop" ); }
-        vTaskDelayUntil( &xLWT, MS( 15 ) );
+        vTaskDelayEDF( &xLWT );
     }
 }
 

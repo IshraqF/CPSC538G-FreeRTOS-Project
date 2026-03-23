@@ -6676,6 +6676,61 @@ void vEDFDrainSwitchLog( void )
     }
 }
 
+void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
+{
+    TickType_t xTimeToWake;
+    BaseType_t xAlreadyYielded, xShouldDelay = pdFALSE;
+
+    configASSERT( pxPreviousWakeTime );
+
+    vTaskSuspendAll();
+    {
+        const TickType_t xConstTickCount = xTickCount;
+
+        xTimeToWake = *pxPreviousWakeTime + pxCurrentTCB->xTaskPeriod;
+
+        if( xConstTickCount < *pxPreviousWakeTime )
+        {
+            if( ( xTimeToWake < *pxPreviousWakeTime ) && ( xTimeToWake > xConstTickCount ) )
+            {
+                xShouldDelay = pdTRUE;
+            }
+        }
+        else
+        {
+            if( ( xTimeToWake < *pxPreviousWakeTime ) || ( xTimeToWake > xConstTickCount ) )
+            {
+                xShouldDelay = pdTRUE;
+            }
+        }
+
+        /* Always refresh the deadline, even if the task does not actually block. */
+        *pxPreviousWakeTime            = xTimeToWake;
+        pxCurrentTCB->xJobReleaseTime  = xTimeToWake;
+        pxCurrentTCB->xJobDeadline     = xTimeToWake + pxCurrentTCB->xTaskDeadline;
+
+        if( xShouldDelay != pdFALSE )
+        {
+            /* Normal case, block until next period. */
+            prvAddCurrentTaskToDelayedList( xTimeToWake - xConstTickCount, pdFALSE );
+        }
+        else
+        {
+            /* Task finished at or after its period boundary — don't
+             * block, but still update its position in the EDF
+             * ready list so the sorted order reflects new deadline. */
+            ( void ) uxListRemove( &( pxCurrentTCB->xStateListItem ) );
+            prvEDFAddToReadyList( pxCurrentTCB );
+        }
+    }
+    xAlreadyYielded = xTaskResumeAll();
+
+    if( xAlreadyYielded == pdFALSE )
+    {
+        taskYIELD_WITHIN_API();
+    }
+}
+
 #endif /* configUSE_EDF_SCHEDULER */
 /*-----------------------------------------------------------*/
 
