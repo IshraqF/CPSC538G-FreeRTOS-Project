@@ -50,6 +50,12 @@
 #define configMINIMAL_STACK_SIZE                ( configSTACK_DEPTH_TYPE ) 256
 #define configUSE_16_BIT_TICKS                  0
 
+/* EDF Scheduler Related */
+#define configUSE_EDF_SCHEDULER                 1
+#define configEDF_MAX_TASKS                     16
+#define configEDF_MAX_SCHEDULING_POINTS         1000
+#define configEDF_ENABLE_DEBUG_LOG              1
+
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Synchronization Related */
