@@ -51,7 +51,7 @@ static void vUARTDrainTask( void * pvParams )
 static void vTask1( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLastWakeTime = xTaskGetTickCount();
+    TickType_t xLastWakeTime = 0;
 
     for( ;; )
     {
@@ -90,11 +90,11 @@ int main( void )
 static void vTaskA( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
-        while( ( xTaskGetTickCount() - xS ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
+        while( ( xTaskGetTickCount() - xS ) < MS( 45 ) ) { __asm volatile ( "nop" ); }
         vTaskDelayEDF( &xLWT );
     }
 }
@@ -102,11 +102,11 @@ static void vTaskA( void * pvParams )
 static void vTaskB( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
-        while( ( xTaskGetTickCount() - xS ) < MS( 100 ) ) { __asm volatile ( "nop" ); }
+        while( ( xTaskGetTickCount() - xS ) < MS( 95 ) ) { __asm volatile ( "nop" ); }
         vTaskDelayEDF( &xLWT );
     }
 }
@@ -116,8 +116,8 @@ int main( void )
     stdio_init_all();
     printf( "\r\n=== EDF Test 2: Two tasks at LL boundary (U=1.0) ===\r\n" );
 
-    xTaskCreateEDF( vTaskA, "T2_A", 512, NULL, 2, MS( 100 ), MS( 100 ), MS( 50 ),  NULL );
-    xTaskCreateEDF( vTaskB, "T2_B", 512, NULL, 2, MS( 200 ), MS( 200 ), MS( 100 ), NULL );
+    xTaskCreateEDF( vTaskA, "T2_A", 512, NULL, 2, MS( 100 ), MS( 100 ), MS( 45 ),  NULL );
+    xTaskCreateEDF( vTaskB, "T2_B", 512, NULL, 2, MS( 200 ), MS( 200 ), MS( 95 ), NULL );
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
 
@@ -137,7 +137,7 @@ int main( void )
 static void vEDFTask( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -186,7 +186,7 @@ int main( void )
 static void vTaskAccepted( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -229,7 +229,7 @@ int main( void )
 static void vOverrunTask( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -268,7 +268,7 @@ int main( void )
 static void vTask6A( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -280,7 +280,7 @@ static void vTask6A( void * pvParams )
 static void vTask6B( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -292,7 +292,7 @@ static void vTask6B( void * pvParams )
 static void vTask6C( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -330,7 +330,7 @@ int main( void )
 static void vTask7A( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();
@@ -342,7 +342,7 @@ static void vTask7A( void * pvParams )
 static void vTask7B( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
+    TickType_t xLWT = 0;
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();

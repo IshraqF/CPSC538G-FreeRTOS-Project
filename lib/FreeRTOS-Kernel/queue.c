@@ -133,6 +133,10 @@ typedef struct QueueDefinition /* The old naming convention is used to prevent b
         UBaseType_t uxQueueNumber;
         uint8_t ucQueueType;
     #endif
+
+    #if ( configUSE_SRP == 1 )
+        TickType_t xResourceCeiling; /**< Min deadline out of tasks using this resource, 0 means no SRP */
+    #endif
 } xQUEUE;
 
 /* The old xQUEUE name is maintained above then typedefed to the new Queue_t
@@ -627,6 +631,10 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength,
 
             /* In case this is a recursive mutex. */
             pxNewQueue->u.xSemaphore.uxRecursiveCallCount = 0;
+
+            #if ( configUSE_SRP == 1 )
+                pxNewQueue->xResourceCeiling = 0;
+            #endif
 
             traceCREATE_MUTEX( pxNewQueue );
 
@@ -2252,6 +2260,20 @@ UBaseType_t uxQueueMessagesWaitingFromISR( const QueueHandle_t xQueue )
 
     return uxReturn;
 }
+/*-----------------------------------------------------------*/
+
+/*-----------------------------------------------------------*/
+
+#if ( configUSE_SRP == 1 )
+    void vQueueSetResourceCeiling( QueueHandle_t xQueue,
+                                   TickType_t xCeiling )
+    {
+        Queue_t * const pxQueue = xQueue;
+
+        configASSERT( pxQueue != NULL );
+        pxQueue->xResourceCeiling = xCeiling;
+    }
+#endif /* configUSE_SRP */
 /*-----------------------------------------------------------*/
 
 void vQueueDelete( QueueHandle_t xQueue )

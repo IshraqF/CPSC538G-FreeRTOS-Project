@@ -56,6 +56,10 @@
 #define configEDF_MAX_SCHEDULING_POINTS         1000
 #define configEDF_ENABLE_DEBUG_LOG              1
 
+/* SRP */
+#define configUSE_SRP                           1
+#define configSRP_MAX_CEILING_DEPTH             8
+
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Synchronization Related */

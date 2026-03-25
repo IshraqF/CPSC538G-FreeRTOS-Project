@@ -1212,4 +1212,9 @@ typedef QueueHandle_t SemaphoreHandle_t;
     #define xSemaphoreGetStaticBuffer( xSemaphore, ppxSemaphoreBuffer )    xQueueGenericGetStaticBuffers( ( QueueHandle_t ) ( xSemaphore ), NULL, ( ppxSemaphoreBuffer ) )
 #endif /* configSUPPORT_STATIC_ALLOCATION */
 
+#if ( configUSE_SRP == 1 )
+    #define vSemaphoreSetResourceCeiling( xSemaphore, xCeiling ) \
+        vQueueSetResourceCeiling( ( QueueHandle_t ) ( xSemaphore ), ( xCeiling ) )
+#endif /* configUSE_SRP */
+
 #endif /* SEMAPHORE_H */

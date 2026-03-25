@@ -417,6 +417,12 @@ typedef enum
     /* EDF-aware periodic delay, always update xJobReleaseTime and xJobDeadline
      * so EDF ordering is correct at high utilization. */
     void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime ) PRIVILEGED_FUNCTION;
+
+    #if ( configUSE_SRP == 1 )
+        void vSRPPushCeiling( TickType_t xCeiling ) PRIVILEGED_FUNCTION;
+        void vSRPPopCeiling( void ) PRIVILEGED_FUNCTION;
+        TickType_t xSRPGetCurrentCeiling( void ) PRIVILEGED_FUNCTION;
+    #endif /* configUSE_SRP */
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )

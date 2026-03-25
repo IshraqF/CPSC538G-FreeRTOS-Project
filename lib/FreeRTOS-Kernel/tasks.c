@@ -502,6 +502,9 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
 
         TickType_t xJobDeadline; /**< The absolute deadline of the current job. */
         TickType_t xJobReleaseTime; /**< The release time of the current job. */
+        #if ( configUSE_SRP == 1 )
+            TickType_t xPreemptionLevel; /**< basically xTaskDeadline, shorter deadline is greater preemption level */
+        #endif
     #endif
 } tskTCB;
 
@@ -572,6 +575,15 @@ PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Ta
     PRIVILEGED_DATA static volatile EDFSwitchEntry_t xEDFSwitchLog[ edfSWITCH_LOG_SIZE ];
     PRIVILEGED_DATA static volatile UBaseType_t      uxEDFSwitchLogHead = ( UBaseType_t ) 0U;
     PRIVILEGED_DATA static volatile UBaseType_t      uxEDFSwitchLogTail = ( UBaseType_t ) 0U;
+
+    #if ( configUSE_SRP == 1 )
+        /* SRP system ceiling stack, each entry is a resource ceiling
+         * pushed when a mutex with a non-zero ceiling is acquired */
+        PRIVILEGED_DATA static TickType_t  xSRPCeilingStack[ configSRP_MAX_CEILING_DEPTH ];
+        PRIVILEGED_DATA static UBaseType_t uxSRPCeilingStackTop = ( UBaseType_t ) 0U;
+        PRIVILEGED_DATA static TickType_t  xSRPCurrentCeiling   = portMAX_DELAY;
+        /* xSRPCurrentCeiling tracks the runtime minimum, portMAX_DELAY means no ceiling active */
+    #endif /* configUSE_SRP */
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( INCLUDE_vTaskDelete == 1 )
@@ -2566,6 +2578,9 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                 pxNewTCB->xTaskPeriod      = xPeriod;
                 pxNewTCB->xTaskDeadline    = xDeadline;
                 pxNewTCB->xTaskComputationTime = xComputationTime;
+                #if ( configUSE_SRP == 1 )
+                    pxNewTCB->xPreemptionLevel = xDeadline;
+                #endif
                 pxNewTCB->xJobReleaseTime  = xTaskGetTickCount();
                 pxNewTCB->xJobDeadline     = pxNewTCB->xJobReleaseTime + xDeadline;
 
@@ -6357,6 +6372,50 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 
 /* EDF Scheduler Implementation */
 #if ( configUSE_EDF_SCHEDULER == 1 )
+
+/*-----------------------------------------------------------*/
+/* SRP ceiling stack operations */
+#if ( configUSE_SRP == 1 )
+
+    void vSRPPushCeiling( TickType_t xCeiling )
+    {
+        configASSERT( uxSRPCeilingStackTop < ( UBaseType_t ) configSRP_MAX_CEILING_DEPTH );
+
+        xSRPCeilingStack[ uxSRPCeilingStackTop ] = xCeiling;
+        uxSRPCeilingStackTop++;
+
+        /* Update runtime minimum, deadline inverse proportional to ceiling */
+        if( xCeiling < xSRPCurrentCeiling )
+        {
+            xSRPCurrentCeiling = xCeiling;
+        }
+    }
+
+    void vSRPPopCeiling( void )
+    {
+        configASSERT( uxSRPCeilingStackTop > ( UBaseType_t ) 0U );
+
+        uxSRPCeilingStackTop--;
+
+        /* Update runtime minimum by scanning remaining stack */
+        xSRPCurrentCeiling = portMAX_DELAY;
+
+        for( UBaseType_t ux = ( UBaseType_t ) 0U; ux < uxSRPCeilingStackTop; ux++ )
+        {
+            if( xSRPCeilingStack[ ux ] < xSRPCurrentCeiling )
+            {
+                xSRPCurrentCeiling = xSRPCeilingStack[ ux ];
+            }
+        }
+    }
+
+    TickType_t xSRPGetCurrentCeiling( void )
+    {
+        return xSRPCurrentCeiling;
+    }
+
+#endif /* configUSE_SRP */
+/*-----------------------------------------------------------*/
 
 static void prvEDFAddToReadyList( TCB_t * pxTCB )
 {
