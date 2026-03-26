@@ -4,9 +4,9 @@
 #include <stdbool.h>
 #include "pico/stdlib.h"
 
-/* Select which test to run (1–7). */
+/* Select which test to run (1–8). */
 #ifndef TEST_CASE
-    #define TEST_CASE  2
+    #define TEST_CASE  8
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -373,3 +373,97 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 7 */
+
+/* -----------------------------------------------------------------------
+ * TEST 8 — CBS book example (Figure 6.14), scaled 1 unit = 10 ms
+ *
+ * Hard periodic task τ1:  C=40ms, T=70ms, D=70ms  → U  = 4/7 ≈ 0.571
+ * CBS server:             Qs=30ms, Ts=80ms          → Us = 3/8 = 0.375
+ * Total utilization:      0.946 ≤ 1.0 (schedulable)
+ *
+ * Aperiodic workload:
+ *   J2,1 arrives t=30ms,  needs 40ms  (Rule 1 on arrival — server idle)
+ *   J2,2 arrives t=130ms, needs 30ms  (Rule 2 on arrival — reuse ds_k)
+ *
+ * Expected trace (ticks = ms at 1 kHz):
+ *   t=  0: τ1 starts (d=70)
+ *   t= 30: J2,1 arrives → Rule 1 → ds_k=110, cs=30
+ *   t= 40: τ1 job 1 done; CBS runs J2,1
+ *   t= 70: cs=0 → Rule 3 → ds_k=190, cs=30; τ1 new job (d=140) preempts CBS
+ *   t=110: τ1 job 2 done; CBS resumes J2,1 (10ms left)
+ *   t=120: J2,1 done, cs=20
+ *   t=130: J2,2 arrives → Rule 2 (cs=20 < (190-130)*0.375=22.5) → keep ds_k=190
+ *   t=140: τ1 new job (d=210); CBS (d=190) has earlier deadline → CBS runs
+ *   t=150: cs=0 → Rule 3 → ds_k=270, cs=30; τ1 (d=210) preempts CBS
+ *   t=190: τ1 job 3 done; CBS finishes J2,2 (10ms left)
+ *   t=200: J2,2 done, cs=20
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 8 )
+
+/* Hard periodic task τ1: C=40ms, T=70ms. */
+static void vTask1( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = xTaskGetTickCount();
+
+    for( ; ; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+/* τ2 job body — runs inside the CBS server each activation. */
+static void vTask2Job( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xS = xTaskGetTickCount();
+    while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
+    printf( "[tau2] job done at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+}
+
+static TaskHandle_t xCBSServerHandle = NULL;
+
+/* Soft periodic task τ2: activates every ~100ms, submits 40ms job to CBS.
+ * Initial offset of 30ms. */
+static void vTask2( void * pvParams )
+{
+    ( void ) pvParams;
+
+    vTaskDelay( MS( 30 ) );   /* first arrival at t=30ms (book: r1=3) */
+
+    for( ; ; )
+    {
+        printf( "[tau2] arrive at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+        xCBSSubmitJob( xCBSServerHandle, vTask2Job, NULL );
+        vTaskDelay( MS( 100 ) );   /* soft period ~100ms
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Test 8: Book Figure 6.14 example ===\r\n" );
+    printf( "tau1: C=40ms T=70ms D=70ms  (U=0.571)\r\n" );
+    printf( "CBS:  Qs=30ms Ts=80ms       (Us=0.375)\r\n" );
+
+    /* Hard periodic task τ1. */
+    xTaskCreateEDF( vTask1, "tau1", 512, NULL, 2,
+                    MS( 70 ), MS( 70 ), MS( 40 ), NULL );
+
+    /* CBS server: Qs=30ms, Ts=80ms. */
+    xTaskCreateCBS( "CBS_SRV", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
+
+    /* Soft periodic task τ2. */
+    xTaskCreate( vTask2, "tau2", 512, NULL, 1, NULL );
+
+    // xTaskCreate( vLEDTask,       "LED",       256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 8 */

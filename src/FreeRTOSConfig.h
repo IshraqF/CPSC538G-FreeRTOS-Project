@@ -56,6 +56,10 @@
 #define configEDF_MAX_SCHEDULING_POINTS         1000
 #define configEDF_ENABLE_DEBUG_LOG              1
 
+/* CBS (Constant Bandwidth Server) Related */
+#define configUSE_CBS_SERVER                    1
+#define configCBS_QUEUE_LENGTH                  16
+
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Synchronization Related */
