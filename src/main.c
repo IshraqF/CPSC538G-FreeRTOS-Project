@@ -438,7 +438,7 @@ static void vTask2( void * pvParams )
     {
         printf( "[tau2] arrive at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
         xCBSSubmitJob( xCBSServerHandle, vTask2Job, NULL );
-        vTaskDelay( MS( 100 ) );   /* soft period ~100ms
+        vTaskDelay( MS( 100 ) );   /* soft period ~100ms */
     }
 }
 
