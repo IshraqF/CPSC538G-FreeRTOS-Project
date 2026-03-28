@@ -380,23 +380,6 @@ int main( void )
  * Hard periodic task τ1:  C=40ms, T=70ms, D=70ms  → U  = 4/7 ≈ 0.571
  * CBS server:             Qs=30ms, Ts=80ms          → Us = 3/8 = 0.375
  * Total utilization:      0.946 ≤ 1.0 (schedulable)
- *
- * Aperiodic workload:
- *   J2,1 arrives t=30ms,  needs 40ms  (Rule 1 on arrival — server idle)
- *   J2,2 arrives t=130ms, needs 30ms  (Rule 2 on arrival — reuse ds_k)
- *
- * Expected trace (ticks = ms at 1 kHz):
- *   t=  0: τ1 starts (d=70)
- *   t= 30: J2,1 arrives → Rule 1 → ds_k=110, cs=30
- *   t= 40: τ1 job 1 done; CBS runs J2,1
- *   t= 70: cs=0 → Rule 3 → ds_k=190, cs=30; τ1 new job (d=140) preempts CBS
- *   t=110: τ1 job 2 done; CBS resumes J2,1 (10ms left)
- *   t=120: J2,1 done, cs=20
- *   t=130: J2,2 arrives → Rule 2 (cs=20 < (190-130)*0.375=22.5) → keep ds_k=190
- *   t=140: τ1 new job (d=210); CBS (d=190) has earlier deadline → CBS runs
- *   t=150: cs=0 → Rule 3 → ds_k=270, cs=30; τ1 (d=210) preempts CBS
- *   t=190: τ1 job 3 done; CBS finishes J2,2 (10ms left)
- *   t=200: J2,2 done, cs=20
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 8 )
 
@@ -421,7 +404,7 @@ static void vTask2Job( void * pvParams )
     ( void ) pvParams;
     TickType_t xS = xTaskGetTickCount();
     while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
-    printf( "[tau2] job done at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+    /* job body completes — [S] log already records the context switches */
 }
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -445,7 +428,7 @@ static void vTask2( void * pvParams )
 int main( void )
 {
     stdio_init_all();
-    printf( "\r\n=== CBS Test 8: Book Figure 6.14 example ===\r\n" );
+    printf( "\r\n=== CBS Test 8 ===\r\n" );
     printf( "tau1: C=40ms T=70ms D=70ms  (U=0.571)\r\n" );
     printf( "CBS:  Qs=30ms Ts=80ms       (Us=0.375)\r\n" );
 
@@ -454,10 +437,12 @@ int main( void )
                     MS( 70 ), MS( 70 ), MS( 40 ), NULL );
 
     /* CBS server: Qs=30ms, Ts=80ms. */
-    xTaskCreateCBS( "CBS_SRV", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
+    xTaskCreateCBS( "tau2", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
 
-    /* Soft periodic task τ2. */
-    xTaskCreate( vTask2, "tau2", 512, NULL, 1, NULL );
+    /* Soft periodic task τ2 — priority 4 so it submits jobs on time without
+     * being blocked by tau1 (EDF pri 2) or UARTDrain (pri 3). It runs for
+     * only a few ticks per activation (queue send + delay). */
+    xTaskCreate( vTask2, "tau2", 512, NULL, 4, NULL );
 
     // xTaskCreate( vLEDTask,       "LED",       256, NULL, 1, NULL );
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
