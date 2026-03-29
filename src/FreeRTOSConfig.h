@@ -52,8 +52,8 @@
 
 /* EDF Scheduler Related */
 #define configUSE_EDF_SCHEDULER                 1
-#define configEDF_MAX_TASKS                     16
-#define configEDF_MAX_SCHEDULING_POINTS         1000
+#define configEDF_MAX_TASKS                     100
+#define configEDF_MAX_SCHEDULING_POINTS         5000
 #define configEDF_ENABLE_DEBUG_LOG              1
 
 /* SRP */
@@ -82,7 +82,7 @@
 /* Memory allocation related definitions. */
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
-#define configTOTAL_HEAP_SIZE                   (128*1024)
+#define configTOTAL_HEAP_SIZE                   (200*1024)
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* Hook function related definitions. */

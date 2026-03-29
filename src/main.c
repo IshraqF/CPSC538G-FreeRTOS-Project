@@ -1,12 +1,13 @@
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
 
 /* Select which test to run (1–7). */
 #ifndef TEST_CASE
-    #define TEST_CASE  2
+    #define TEST_CASE 6
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -38,6 +39,9 @@ static void vUARTDrainTask( void * pvParams )
     {
         vEDFDrainSwitchLog();
         vEDFDrainMissLog();
+        #if ( configUSE_SRP == 1 )
+            vSRPDrainEventLog();
+        #endif
         vTaskDelay( MS( 10 ) );
     }
 }
@@ -69,10 +73,10 @@ int main( void )
     printf( "\r\n=== EDF Test 1: Single task, U=0.5 ===\r\n" );
 
     xTaskCreateEDF( vTask1, "T1_Half", 512, NULL, 2,
-                    MS( 200 ), MS( 200 ), MS( 100 ), NULL );
+                    MS( 200 ), MS( 200 ), MS( 100 ), 0, NULL );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -116,10 +120,10 @@ int main( void )
     stdio_init_all();
     printf( "\r\n=== EDF Test 2: Two tasks at LL boundary (U=1.0) ===\r\n" );
 
-    xTaskCreateEDF( vTaskA, "T2_A", 512, NULL, 2, MS( 100 ), MS( 100 ), MS( 45 ),  NULL );
-    xTaskCreateEDF( vTaskB, "T2_B", 512, NULL, 2, MS( 200 ), MS( 200 ), MS( 95 ), NULL );
+    xTaskCreateEDF( vTaskA, "T2_A", 512, NULL, 2, MS( 100 ), MS( 100 ), MS( 45 ),  0, NULL );
+    xTaskCreateEDF( vTaskB, "T2_B", 512, NULL, 2, MS( 200 ), MS( 200 ), MS( 95 ), 0, NULL );
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -162,13 +166,13 @@ int main( void )
     printf( "\r\n=== EDF Test 3: EDF + non-EDF coexistence ===\r\n" );
 
     xTaskCreateEDF( vEDFTask, "T3_EDF", 512, NULL, 2,
-                    MS( 100 ), MS( 100 ), MS( 30 ), NULL );
+                    MS( 100 ), MS( 100 ), MS( 30 ), 0, NULL );
 
     /* Non-EDF task at priority 1 (same numeric priority as EDF tasks, but
      * the scheduler picks EDF tasks from xEDFReadyTasksList first). */
     xTaskCreate( vBackgroundTask, "T3_BG",  512, NULL, 1, NULL );
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -203,16 +207,16 @@ int main( void )
 
     /* Task A: U=0.60 — should be admitted. */
     xResult = xTaskCreateEDF( vTaskAccepted, "T4_A", 512, NULL, 2,
-                               MS( 100 ), MS( 100 ), MS( 60 ), NULL );
+                               MS( 100 ), MS( 100 ), MS( 60 ), 0, NULL );
     printf( "T4_A create result: %s\r\n", ( xResult == pdPASS ) ? "PASS" : "FAIL" );
 
     /* Task B: would push total U to 1.10 — should be rejected. */
     xResult = xTaskCreateEDF( vTaskAccepted, "T4_B", 512, NULL, 2,
-                               MS( 200 ), MS( 200 ), MS( 100 ), NULL );
+                               MS( 200 ), MS( 200 ), MS( 100 ), 0, NULL );
     printf( "T4_B create result (expect FAIL): %s\r\n", ( xResult == pdPASS ) ? "PASS" : "FAIL" );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -246,10 +250,10 @@ int main( void )
 
     /* WCET declared as 50 ms but task will run for 210 ms — generates a miss. */
     xTaskCreateEDF( vOverrunTask, "T5_Miss", 512, NULL, 2,
-                    MS( 200 ), MS( 200 ), MS( 50 ), NULL );
+                    MS( 200 ), MS( 200 ), MS( 50 ), 0, NULL );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -307,12 +311,12 @@ int main( void )
     printf( "\r\n=== EDF Test 6: Three-task EDF ordering ===\r\n" );
     printf( "Expected switch order at t=0: A(D=100) -> B(D=150) -> C(D=200)\r\n\r\n" );
 
-    xTaskCreateEDF( vTask6A, "T6_A", 512, NULL, 2, MS( 300 ), MS( 100 ), MS( 20 ), NULL );
-    xTaskCreateEDF( vTask6B, "T6_B", 512, NULL, 2, MS( 200 ), MS( 150 ), MS( 30 ), NULL );
-    xTaskCreateEDF( vTask6C, "T6_C", 512, NULL, 2, MS( 400 ), MS( 200 ), MS( 40 ), NULL );
+    xTaskCreateEDF( vTask6A, "T6_A", 512, NULL, 2, MS( 300 ), MS( 100 ), MS( 20 ), 0, NULL );
+    xTaskCreateEDF( vTask6B, "T6_B", 512, NULL, 2, MS( 200 ), MS( 150 ), MS( 30 ), 0, NULL );
+    xTaskCreateEDF( vTask6C, "T6_C", 512, NULL, 2, MS( 400 ), MS( 200 ), MS( 40 ), 0, NULL );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -357,8 +361,8 @@ int main( void )
     stdio_init_all();
     printf( "\r\n=== EDF Test 7: Constrained-deadline demand criterion ===\r\n" );
 
-    xRA = xTaskCreateEDF( vTask7A, "T7_A", 512, NULL, 2, MS( 10 ), MS( 5 ), MS( 3 ), NULL );
-    xRB = xTaskCreateEDF( vTask7B, "T7_B", 512, NULL, 2, MS( 15 ), MS( 8 ), MS( 4 ), NULL );
+    xRA = xTaskCreateEDF( vTask7A, "T7_A", 512, NULL, 2, MS( 10 ), MS( 5 ), MS( 3 ), 0, NULL );
+    xRB = xTaskCreateEDF( vTask7B, "T7_B", 512, NULL, 2, MS( 15 ), MS( 8 ), MS( 4 ), 0, NULL );
 
     printf( "T7_A admission: %s (expect PASS)\r\n", ( xRA == pdPASS ) ? "PASS" : "FAIL" );
     printf( "T7_B admission: %s (expect PASS)\r\n", ( xRB == pdPASS ) ? "PASS" : "FAIL" );
@@ -366,10 +370,942 @@ int main( void )
     vEDFPrintStats();
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
 }
 
 #endif /* TEST_CASE == 7 */
+
+/* -----------------------------------------------------------------------
+ * TEST 8 — SRP blocking: two EDF tasks sharing one mutex
+ *
+ *   Task H: T=200, D=200, C=30 ms  (locks R for 10 ms in the middle)
+ *   Task L: T=400, D=400, C=190 ms (locks R at ~10 ms, holds for 150 ms)
+ *   R ceiling = min(200, 400) = 200
+ *   Total U = 30/200 + 190/400 = 0.15 + 0.475 = 0.625 (schedulable)
+ *
+ *   Timeline (first hyper-period):
+ *     t=0:   Both ready. H(D=200) runs first (shorter deadline).
+ *     t=30:  H finishes job 1. L(D=400) starts, locks R at ~t=40.
+ *     t=40:  L holds R → system ceiling = 200.
+ *     t=190: L unlocks R → system ceiling = portMAX_DELAY.
+ *     t=200: H's 2nd job arrives. L still running (non-CS work).
+ *            H(D=400) preempts L because ceiling is clear.
+ *
+ *   To force actual SRP blocking, we offset L so it holds R across
+ *   H's period boundary:
+ *     - L locks R early in its job and holds it for 150 ms.
+ *     - At t=200, L still holds R (locked at ~40, unlocked at ~190).
+ *
+ *   Wait — that doesn't span t=200. Let's make L lock R later:
+ *     - L works 80 ms, locks R at ~t=110, holds for 150 ms → unlocks ~t=260.
+ *     - At t=200, H's 2nd job arrives. L holds R, ceiling=200.
+ *       H's absolute deadline=400. H's preemption level (relative D)=200.
+ *       SRP test: 200 < 200 → FALSE. H is SRP-blocked!
+ *     - At t=260, L unlocks R, ceiling clears. H preempts and runs.
+ *     - H must finish by absolute deadline 400: starts ~260, C=30, done ~290. OK.
+ *
+ *   Expected:
+ *     - SRP log shows L lock at ~110, unlock at ~260
+ *     - H is delayed from t=200 until ~t=260 (SRP blocking)
+ *     - Zero deadline misses
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 8 )
+
+static SemaphoreHandle_t xMutexR;
+
+static void vTaskH( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+
+        /* Work 10 ms, lock R for 10 ms, work 10 ms = 30 ms total */
+        while( ( xTaskGetTickCount() - xS ) < MS( 10 ) ) { __asm volatile ( "nop" ); }
+
+        xSemaphoreTake( xMutexR, portMAX_DELAY );
+        {
+            TickType_t xCS = xTaskGetTickCount();
+            while( ( xTaskGetTickCount() - xCS ) < MS( 10 ) ) { __asm volatile ( "nop" ); }
+        }
+        xSemaphoreGive( xMutexR );
+
+        while( ( xTaskGetTickCount() - xS ) < MS( 30 ) ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTaskL( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+
+        /* Work 80 ms before locking */
+        while( ( xTaskGetTickCount() - xS ) < MS( 80 ) ) { __asm volatile ( "nop" ); }
+
+        /* Lock R for 150 ms — this will span H's period boundary */
+        xSemaphoreTake( xMutexR, portMAX_DELAY );
+        {
+            TickType_t xCS = xTaskGetTickCount();
+            while( ( xTaskGetTickCount() - xCS ) < MS( 150 ) ) { __asm volatile ( "nop" ); }
+        }
+        xSemaphoreGive( xMutexR );
+
+        /* Remaining work until C=280 ms total */
+        while( ( xTaskGetTickCount() - xS ) < MS( 280 ) ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== SRP Test 8: SRP blocking demonstration ===\r\n" );
+    printf( "H: T=200,D=200,C=30  L: T=600,D=600,C=280  R ceiling=200\r\n" );
+    printf( "L holds R across H's period boundary → H is SRP-blocked\r\n\r\n" );
+
+    /* Create the shared mutex and set its SRP ceiling */
+    xMutexR = xSemaphoreCreateBinary();
+    configASSERT( xMutexR );
+    xSemaphoreGive( xMutexR );  /* Binary semaphores start empty — make it available */
+    vSemaphoreSetResourceCeiling( xMutexR, MS( 200 ) );
+
+    xTaskCreateEDF( vTaskH, "T8_H", 512, NULL, 2,
+                    MS( 200 ), MS( 200 ), MS( 30 ), 0, NULL );
+    xTaskCreateEDF( vTaskL, "T8_L", 512, NULL, 2,
+                    MS( 600 ), MS( 600 ), MS( 280 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 8 */
+
+/* -----------------------------------------------------------------------
+ * TEST 9 — 100 implicit-deadline tasks (LL bound admission)
+ * TEST 10 — 100 constrained-deadline tasks (processor demand admission)
+ *
+ *   Both tests create 100 tasks with T=1000 ms, C=9 ms (U_i = 0.009).
+ *   Test 9:  D=1000 (implicit) → LL bound: U_total = 0.9 ≤ 1.0 → all admitted.
+ *   Test 10: D=500  (constrained) → processor demand: at t=500,
+ *            h(500) = n×9. Fails when n > 55 (504 > 500). ~55 admitted.
+ *
+ *   This demonstrates:
+ *   1. LL bound admits all 100 tasks (utilization sufficient).
+ *   2. Processor demand rejects tasks earlier due to tighter deadlines.
+ *   3. Processor demand is computationally more expensive (timing shown).
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 9 ) || ( TEST_CASE == 10 )
+
+static void vGenericEDFTask( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 9 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+
+    #if ( TEST_CASE == 9 )
+        const TickType_t xDeadline = MS( 1000 );  /* implicit: D = T */
+        printf( "\r\n=== EDF Test 9: 100 implicit-deadline tasks (LL bound) ===\r\n" );
+        printf( "Each task: T=1000, D=1000, C=9 → U_i=0.009\r\n\r\n" );
+    #else
+        const TickType_t xDeadline = MS( 500 );   /* constrained: D < T */
+        printf( "\r\n=== EDF Test 10: 100 constrained-deadline tasks (processor demand) ===\r\n" );
+        printf( "Each task: T=1000, D=500, C=9 → U_i=0.009\r\n\r\n" );
+    #endif
+
+    UBaseType_t uxAdmitted = 0;
+    uint32_t xStartUs = time_us_32();
+
+    for( int i = 0; i < 100; i++ )
+    {
+        char cName[ configMAX_TASK_NAME_LEN ];
+        snprintf( cName, sizeof( cName ), "T_%02d", i );
+
+        BaseType_t xResult = xTaskCreateEDF( vGenericEDFTask, cName, 256, NULL, 2,
+                                              MS( 1000 ), xDeadline, MS( 9 ), 0, NULL );
+
+        if( xResult == pdPASS )
+        {
+            uxAdmitted++;
+            /* Print running utilization: U = admitted * C / T, scaled by 10000 */
+            uint32_t ulUtil = ( uint32_t ) uxAdmitted * 9 * 10000 / 1000;
+            printf( "  [%3d] ADMIT  U=%lu.%02lu%%\r\n", i,
+                    ( unsigned long ) ( ulUtil / 100 ),
+                    ( unsigned long ) ( ulUtil % 100 ) );
+        }
+        else
+        {
+            if( uxAdmitted == ( UBaseType_t ) i )
+            {
+                /* First rejection — print where it stopped */
+                uint32_t ulUtil = ( uint32_t ) uxAdmitted * 9 * 10000 / 1000;
+                printf( "  [%3d] REJECT (first) U=%lu.%02lu%%\r\n", i,
+                        ( unsigned long ) ( ulUtil / 100 ),
+                        ( unsigned long ) ( ulUtil % 100 ) );
+            }
+        }
+    }
+
+    uint32_t xElapsedUs = time_us_32() - xStartUs;
+
+    printf( "\r\nAdmitted: %lu / 100\r\n", ( unsigned long ) uxAdmitted );
+    printf( "Total admission time: %lu us\r\n\r\n", ( unsigned long ) xElapsedUs );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 9 || TEST_CASE == 10 */
+
+/* -----------------------------------------------------------------------
+ * TEST 13 — Nested resources: ceiling stack push/pop correctness
+ *
+ *   Task H: T=200, D=200, C=30 (uses R1 briefly)
+ *   Task L: T=600, D=600, C=300 (uses R2 for a long time, R1 nested inside)
+ *   R1 ceiling = min(200, 600) = 200 (both H and L use R1)
+ *   R2 ceiling = 600             (only L uses R2)
+ *
+ *   Key timeline (first hyper-period):
+ *     t=0:   H runs first (shorter deadline).
+ *     t=30:  H done. L starts.
+ *     t=80:  L takes R2 → ceiling = 600.
+ *     t=180: L takes R1 nested → ceiling = min(600,200) = 200.
+ *     t=200: H's 2nd period. SRP test: 200 < 200 → FALSE. H BLOCKED.
+ *     t=280: L releases R1 → ceiling = 600. H preempts (200 < 600).
+ *     t=330: L releases R2 → ceiling = portMAX_DELAY.
+ *
+ *   Expected SRP log shows nested push(600), push(200), pop(200), pop(600).
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 13 )
+
+static SemaphoreHandle_t xSemR1;
+static SemaphoreHandle_t xSemR2;
+
+static void vTask13H( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        printf( "[T13_H] job START at tick %lu\r\n", ( unsigned long ) xS );
+
+        /* Work 10 ms, lock R1 for 10 ms, work 10 ms = 30 ms total */
+        while( ( xTaskGetTickCount() - xS ) < MS( 10 ) ) { __asm volatile ( "nop" ); }
+
+        printf( "[T13_H] taking R1 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+        xSemaphoreTake( xSemR1, portMAX_DELAY );
+        printf( "[T13_H] got R1 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+        {
+            TickType_t xCS = xTaskGetTickCount();
+            while( ( xTaskGetTickCount() - xCS ) < MS( 10 ) ) { __asm volatile ( "nop" ); }
+        }
+        xSemaphoreGive( xSemR1 );
+        printf( "[T13_H] released R1 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+
+        while( ( xTaskGetTickCount() - xS ) < MS( 30 ) ) { __asm volatile ( "nop" ); }
+
+        printf( "[T13_H] job DONE at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask13L( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        printf( "[T13_L] job START at tick %lu\r\n", ( unsigned long ) xS );
+
+        /* Work 50 ms before taking R2 */
+        while( ( xTaskGetTickCount() - xS ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
+
+        printf( "[T13_L] taking R2 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+        xSemaphoreTake( xSemR2, portMAX_DELAY );
+        printf( "[T13_L] got R2 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+        {
+            /* Work 100 ms inside R2 before nesting R1 */
+            TickType_t xCS2 = xTaskGetTickCount();
+            while( ( xTaskGetTickCount() - xCS2 ) < MS( 100 ) ) { __asm volatile ( "nop" ); }
+
+            /* Take R1 (nested inside R2) — ceiling becomes 200 */
+            printf( "[T13_L] taking R1 (nested) at tick %lu\r\n",
+                    ( unsigned long ) xTaskGetTickCount() );
+            xSemaphoreTake( xSemR1, portMAX_DELAY );
+            printf( "[T13_L] got R1 at tick %lu\r\n",
+                    ( unsigned long ) xTaskGetTickCount() );
+            {
+                TickType_t xCS1 = xTaskGetTickCount();
+                while( ( xTaskGetTickCount() - xCS1 ) < MS( 100 ) ) { __asm volatile ( "nop" ); }
+            }
+            xSemaphoreGive( xSemR1 );
+            printf( "[T13_L] released R1 at tick %lu\r\n",
+                    ( unsigned long ) xTaskGetTickCount() );
+            /* ceiling back to 600 — H can preempt now */
+
+            /* Work 50 ms more inside R2 after releasing R1 */
+            TickType_t xCS2b = xTaskGetTickCount();
+            while( ( xTaskGetTickCount() - xCS2b ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
+        }
+        xSemaphoreGive( xSemR2 );
+        printf( "[T13_L] released R2 at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+
+        /* Remaining work */
+        while( ( xTaskGetTickCount() - xS ) < MS( 300 ) ) { __asm volatile ( "nop" ); }
+
+        printf( "[T13_L] job DONE at tick %lu\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== SRP Test 13: Nested resources ===\r\n" );
+    printf( "H: T=200,D=200,C=30 (uses R1)\r\n" );
+    printf( "L: T=600,D=600,C=300 (uses R2, then R1 nested inside R2)\r\n" );
+    printf( "R1 ceiling=200, R2 ceiling=600\r\n\r\n" );
+
+    xSemR1 = xSemaphoreCreateBinary();
+    xSemR2 = xSemaphoreCreateBinary();
+    configASSERT( xSemR1 );
+    configASSERT( xSemR2 );
+    xSemaphoreGive( xSemR1 );
+    xSemaphoreGive( xSemR2 );
+
+    vSemaphoreSetResourceCeiling( xSemR1, MS( 200 ) );
+    vSemaphoreSetResourceCeiling( xSemR2, MS( 600 ) );
+
+    xTaskCreateEDF( vTask13H, "T13_H", 512, NULL, 2,
+                    MS( 200 ), MS( 200 ), MS( 30 ), 0, NULL );
+    xTaskCreateEDF( vTask13L, "T13_L", 512, NULL, 2,
+                    MS( 600 ), MS( 600 ), MS( 300 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 13 */
+
+/* -----------------------------------------------------------------------
+ * TEST 14 — SRP prevents deadlock (opposite lock order)
+ *
+ *   Task A: T=300, D=300, C=60 (takes R1, then R2 while holding R1)
+ *   Task B: T=900, D=900, C=500 (takes R2, then R1 while holding R2)
+ *   R1 ceiling = min(300, 900) = 300
+ *   R2 ceiling = min(300, 900) = 300
+ *
+ *   Without SRP, this DEADLOCKS:
+ *     A holds R1, waits for R2. B holds R2, waits for R1.
+ *
+ *   With SRP:
+ *     When B holds R2, ceiling = 300. A's preemption level (D=300):
+ *     300 < 300 → FALSE. A is SRP-blocked, cannot start.
+ *     B finishes all critical sections, releases everything.
+ *     Then A runs, takes R1, takes R2 (both free). No deadlock.
+ *
+ *   Expected: zero deadlocks, zero deadline misses, stable periodic execution.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 14 )
+
+static SemaphoreHandle_t xSemR1;
+static SemaphoreHandle_t xSemR2;
+
+static void vTask14A( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+
+        /* Work 10 ms */
+        while( ( xTaskGetTickCount() - xS ) < MS( 10 ) ) { __asm volatile ( "nop" ); }
+
+        /* Take R1 first, then R2 (nested) */
+        xSemaphoreTake( xSemR1, portMAX_DELAY );
+        {
+            xSemaphoreTake( xSemR2, portMAX_DELAY );
+            {
+                TickType_t xCS = xTaskGetTickCount();
+                while( ( xTaskGetTickCount() - xCS ) < MS( 20 ) ) { __asm volatile ( "nop" ); }
+            }
+            xSemaphoreGive( xSemR2 );
+        }
+        xSemaphoreGive( xSemR1 );
+
+        while( ( xTaskGetTickCount() - xS ) < MS( 60 ) ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask14B( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+
+        /* Work 50 ms */
+        while( ( xTaskGetTickCount() - xS ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
+
+        /* Take R2 first, then R1 — OPPOSITE ORDER from Task A */
+        xSemaphoreTake( xSemR2, portMAX_DELAY );
+        {
+            xSemaphoreTake( xSemR1, portMAX_DELAY );
+            {
+                TickType_t xCS = xTaskGetTickCount();
+                while( ( xTaskGetTickCount() - xCS ) < MS( 200 ) ) { __asm volatile ( "nop" ); }
+            }
+            xSemaphoreGive( xSemR1 );
+        }
+        xSemaphoreGive( xSemR2 );
+
+        while( ( xTaskGetTickCount() - xS ) < MS( 500 ) ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== SRP Test 14: Deadlock prevention ===\r\n" );
+    printf( "A: T=300,D=300,C=60 (takes R1 then R2)\r\n" );
+    printf( "B: T=900,D=900,C=500 (takes R2 then R1 — opposite order)\r\n" );
+    printf( "R1 ceiling=300, R2 ceiling=300\r\n" );
+    printf( "Without SRP this would deadlock. With SRP, A is blocked while B holds resources.\r\n\r\n" );
+
+    xSemR1 = xSemaphoreCreateBinary();
+    xSemR2 = xSemaphoreCreateBinary();
+    configASSERT( xSemR1 );
+    configASSERT( xSemR2 );
+    xSemaphoreGive( xSemR1 );
+    xSemaphoreGive( xSemR2 );
+
+    vSemaphoreSetResourceCeiling( xSemR1, MS( 300 ) );
+    vSemaphoreSetResourceCeiling( xSemR2, MS( 300 ) );
+
+    xTaskCreateEDF( vTask14A, "T14_A", 512, NULL, 2,
+                    MS( 300 ), MS( 300 ), MS( 60 ), 0, NULL );
+    xTaskCreateEDF( vTask14B, "T14_B", 512, NULL, 2,
+                    MS( 900 ), MS( 900 ), MS( 500 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 14 */
+
+/* -----------------------------------------------------------------------
+ * TEST 15 — SRP internal state verification
+ *
+ *   Single-task test that performs a known sequence of lock/unlock operations
+ *   and checks xSRPGetCurrentCeiling() after EVERY step to verify the
+ *   ceiling stack state is exactly correct.
+ *
+ *   Resources:
+ *     R1: ceiling = 100
+ *     R2: ceiling = 300
+ *     R3: ceiling = 500
+ *
+ *   Sequence and expected system ceiling after each operation:
+ *     Step 0: Nothing locked             → ceiling = MAX (4294967295)
+ *     Step 1: Take R2 (300)              → ceiling = 300
+ *     Step 2: Take R1 (100) nested       → ceiling = 100
+ *     Step 3: Release R1                 → ceiling = 300
+ *     Step 4: Release R2                 → ceiling = MAX
+ *     Step 5: Take R1 (100)              → ceiling = 100
+ *     Step 6: Take R3 (500) nested       → ceiling = 100  (R1 still min)
+ *     Step 7: Take R2 (300) nested       → ceiling = 100  (R1 still min)
+ *     Step 8: Release R2                 → ceiling = 100  (R1 still min)
+ *     Step 9: Release R3                 → ceiling = 100  (only R1 left)
+ *     Step 10: Release R1                → ceiling = MAX
+ *
+ *   This also tests: triple nesting, releasing middle of stack,
+ *   minimum tracking when non-minimum is pushed/popped.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 15 )
+
+static SemaphoreHandle_t xSemR1;
+static SemaphoreHandle_t xSemR2;
+static SemaphoreHandle_t xSemR3;
+
+static UBaseType_t uxTestStep = 0;
+static UBaseType_t uxPassCount = 0;
+static UBaseType_t uxFailCount = 0;
+
+static void prvCheckState( TickType_t xExpCeiling, UBaseType_t uxExpDepth, const char * pcDesc )
+{
+    TickType_t xActCeiling = xSRPGetCurrentCeiling();
+    UBaseType_t uxActDepth = uxSRPGetCeilingStackDepth();
+    BaseType_t xCeilOk  = ( xActCeiling == xExpCeiling );
+    BaseType_t xDepthOk = ( uxActDepth  == uxExpDepth );
+    const char * pcVerdict = ( xCeilOk && xDepthOk ) ? "PASS" : "FAIL";
+
+    uxTestStep++;
+
+    printf( "  [%2lu] %s | ceil=%10lu exp=%10lu | depth=%lu exp=%lu | %s\r\n",
+            ( unsigned long ) uxTestStep,
+            pcVerdict,
+            ( unsigned long ) xActCeiling,
+            ( unsigned long ) xExpCeiling,
+            ( unsigned long ) uxActDepth,
+            ( unsigned long ) uxExpDepth,
+            pcDesc );
+
+    if( xCeilOk && xDepthOk )
+    {
+        uxPassCount++;
+    }
+    else
+    {
+        uxFailCount++;
+    }
+}
+
+static void vStateVerifyTask( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+
+    /* Run the verification sequence once per period */
+    for( ;; )
+    {
+        uxTestStep  = 0;
+        uxPassCount = 0;
+        uxFailCount = 0;
+
+        printf( "\r\n--- SRP state verification run (tick=%lu) ---\r\n",
+                ( unsigned long ) xTaskGetTickCount() );
+
+        /* Step 0: nothing locked — depth=0, ceiling=MAX */
+        prvCheckState( portMAX_DELAY, 0, "initial: no locks" );
+
+        /* Step 1: take R2 (ceiling=300) — depth=1, ceiling=300 */
+        xSemaphoreTake( xSemR2, portMAX_DELAY );
+        prvCheckState( MS( 300 ), 1, "after take R2(300)" );
+
+        /* Step 2: take R1 nested (ceiling=100) — depth=2, ceiling=100 */
+        xSemaphoreTake( xSemR1, portMAX_DELAY );
+        prvCheckState( MS( 100 ), 2, "after take R1(100) nested in R2" );
+
+        /* Step 3: release R1 → depth=1, ceiling=300 */
+        xSemaphoreGive( xSemR1 );
+        prvCheckState( MS( 300 ), 1, "after release R1, only R2 held" );
+
+        /* Step 4: release R2 → depth=0, ceiling=MAX */
+        xSemaphoreGive( xSemR2 );
+        prvCheckState( portMAX_DELAY, 0, "after release R2, nothing held" );
+
+        /* Step 5: take R1 (ceiling=100) — depth=1, ceiling=100 */
+        xSemaphoreTake( xSemR1, portMAX_DELAY );
+        prvCheckState( MS( 100 ), 1, "after take R1(100)" );
+
+        /* Step 6: take R3 nested (ceiling=500) — depth=2, ceiling=100 (R1 still min) */
+        xSemaphoreTake( xSemR3, portMAX_DELAY );
+        prvCheckState( MS( 100 ), 2, "after take R3(500) nested, R1 still min" );
+
+        /* Step 7: take R2 nested (ceiling=300) — depth=3, ceiling=100 (R1 still min) */
+        xSemaphoreTake( xSemR2, portMAX_DELAY );
+        prvCheckState( MS( 100 ), 3, "after take R2(300) triple-nested, R1 still min" );
+
+        /* Step 8: release R2 — depth=2, ceiling=100 (R1 still min) */
+        xSemaphoreGive( xSemR2 );
+        prvCheckState( MS( 100 ), 2, "after release R2, R1+R3 held, R1 still min" );
+
+        /* Step 9: release R3 — depth=1, ceiling=100 (only R1 held) */
+        xSemaphoreGive( xSemR3 );
+        prvCheckState( MS( 100 ), 1, "after release R3, only R1 held" );
+
+        /* Step 10: release R1 → depth=0, ceiling=MAX */
+        xSemaphoreGive( xSemR1 );
+        prvCheckState( portMAX_DELAY, 0, "after release R1, nothing held" );
+
+        printf( "\r\n=== Results: %lu/%lu passed ===\r\n",
+                ( unsigned long ) uxPassCount,
+                ( unsigned long ) ( uxPassCount + uxFailCount ) );
+
+        if( uxFailCount == 0 )
+        {
+            printf( "ALL SRP STATE CHECKS PASSED\r\n" );
+        }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== SRP Test 15: Internal state verification ===\r\n" );
+    printf( "Verifies ceiling value AND stack depth after every lock/unlock\r\n\r\n" );
+
+    xSemR1 = xSemaphoreCreateBinary();
+    xSemR2 = xSemaphoreCreateBinary();
+    xSemR3 = xSemaphoreCreateBinary();
+    configASSERT( xSemR1 );
+    configASSERT( xSemR2 );
+    configASSERT( xSemR3 );
+    xSemaphoreGive( xSemR1 );
+    xSemaphoreGive( xSemR2 );
+    xSemaphoreGive( xSemR3 );
+
+    vSemaphoreSetResourceCeiling( xSemR1, MS( 100 ) );
+    vSemaphoreSetResourceCeiling( xSemR2, MS( 300 ) );
+    vSemaphoreSetResourceCeiling( xSemR3, MS( 500 ) );
+
+    /* One EDF task that runs the verification sequence.
+     * Period is long enough to complete all steps + print. */
+    xTaskCreateEDF( vStateVerifyTask, "T15_Verify", 1024, NULL, 2,
+                    MS( 5000 ), MS( 5000 ), MS( 100 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 15 */
+
+/* -----------------------------------------------------------------------
+ * TEST 16 — Admission control with SRP blocking times
+ *
+ * Behavioral: verifies that xTaskCreateEDF returns pdPASS / pdFAIL for
+ * each of 8 scenarios covering every rejection path in the admission
+ * control logic.
+ *
+ * Internal exposure: after every call, the admitted-task count from
+ * uxEDFGetAdmittedCount() is checked.  Both the decision AND the count
+ * must match expectations for the step to pass.  The expected internal
+ * state (C+B arithmetic, utilisation sum, demand-bound value) is printed
+ * alongside each result so the reader can follow the reasoning.
+ *
+ * Scenarios
+ *   LL path (all implicit-deadline tasks, D == T):
+ *     1. T1  T=1000 C=300 B=100  → ADMIT  (C+B=400≤1000, U=0.30, sum=0.30)
+ *     2. T2  T=500  C=150 B=50   → ADMIT  (C+B=200≤500,  U=0.30, sum=0.60)
+ *     3. TR1 T=300  C=200 B=150  → REJECT (C+B=350 > D=300)
+ *     4. TR2 T=400  C=300 B=101  → REJECT (C+B=401 > D=400, boundary)
+ *     5. TR3 T=200  C=130 B=0    → REJECT (C+B OK, sum=1.25 > 1.0)
+ *     6. T3  T=2000 C=100 B=50   → ADMIT  (C+B=150≤2000, U=0.05, sum=0.65)
+ *   Demand-bound path (constrained deadline D < T):
+ *     7. T4  T=1000 D=800 C=100 B=50  → ADMIT  (h(800)=300 ≤ 800)
+ *     8. TR4 T=800  D=800 C=200 B=400 → REJECT (h(800)=850 > 800 via large B)
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 16 )
+
+/* Simple periodic body — just sleeps; no resource usage needed here.
+ * Admission control is the focus; runtime SRP is covered by tests 8/13/14. */
+static void vAC16Task( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; ) { vTaskDelayEDF( &xLWT ); }
+}
+
+/* Check one admission step.
+ *   xGot        — return value from xTaskCreateEDF
+ *   xExpected   — pdPASS or pdFAIL
+ *   uxExpCount  — expected admitted-task count AFTER this call
+ *   pcWhy       — human-readable description of the internal state
+ *   pcDesc      — one-line scenario label
+ *
+ * Two independent assertions per step:
+ *   (a) Behavioral  — xGot == xExpected
+ *   (b) Internal    — uxEDFGetAdmittedCount() == uxExpCount
+ */
+static void prvAC16Check( BaseType_t xGot,
+                          BaseType_t xExpected,
+                          UBaseType_t uxExpCount,
+                          UBaseType_t * puxPass,
+                          UBaseType_t * puxFail,
+                          const char * pcWhy,
+                          const char * pcDesc )
+{
+    UBaseType_t uxActCount = uxEDFGetAdmittedCount();
+    BaseType_t  xResultOk  = ( xGot      == xExpected  );
+    BaseType_t  xCountOk   = ( uxActCount == uxExpCount );
+    const char *pcRes      = ( xGot      == pdPASS ) ? "ADMIT " : "REJECT";
+    const char *pcExp      = ( xExpected == pdPASS ) ? "ADMIT " : "REJECT";
+    const char *pcVerdict  = ( xResultOk && xCountOk ) ? "PASS" : "FAIL";
+
+    printf( "  [%s] result=%-6s exp=%-6s | admitted=%lu exp=%lu | %s\r\n",
+            pcVerdict, pcRes, pcExp,
+            ( unsigned long ) uxActCount,
+            ( unsigned long ) uxExpCount,
+            pcDesc );
+    printf( "       internal: %s\r\n", pcWhy );
+
+    if( xResultOk && xCountOk ) { ( *puxPass )++; }
+    else                        { ( *puxFail )++; }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== SRP Test 16: Admission control with blocking times ===\r\n" );
+    printf( "Each step shows: behavioral result | admitted-task count | internal reasoning\r\n\r\n" );
+
+    UBaseType_t uxPass = 0, uxFail = 0;
+    BaseType_t  xRet;
+
+    /* ------------------------------------------------------------------ */
+    printf( "--- LL path (implicit deadline, D == T) ---\r\n" );
+
+    /* Step 1: U=0.30, C+B=400 <= 1000 => ADMIT, count 0->1 */
+    xRet = xTaskCreateEDF( vAC16Task, "T1", 512, NULL, 2,
+                           MS( 1000 ), MS( 1000 ), MS( 300 ), MS( 100 ), NULL );
+    prvAC16Check( xRet, pdPASS, 1, &uxPass, &uxFail,
+                  "C+B=300+100=400 <= D=1000 OK; U=300/1000=0.30; sum=0.30 <= 1.0",
+                  "T1  T=1000 C=300 B=100 -> ADMIT" );
+
+    /* Step 2: U=0.30, C+B=200 <= 500, sum=0.60 => ADMIT, count 1->2 */
+    xRet = xTaskCreateEDF( vAC16Task, "T2", 512, NULL, 2,
+                           MS( 500 ), MS( 500 ), MS( 150 ), MS( 50 ), NULL );
+    prvAC16Check( xRet, pdPASS, 2, &uxPass, &uxFail,
+                  "C+B=150+50=200 <= D=500 OK; U=150/500=0.30; sum=0.60 <= 1.0",
+                  "T2  T=500  C=150 B=50  -> ADMIT" );
+
+    /* Step 3: C+B=350 > D=300 => REJECT, count stays 2 */
+    xRet = xTaskCreateEDF( vAC16Task, "TR1", 512, NULL, 2,
+                           MS( 300 ), MS( 300 ), MS( 200 ), MS( 150 ), NULL );
+    prvAC16Check( xRet, pdFAIL, 2, &uxPass, &uxFail,
+                  "C+B=200+150=350 > D=300 => LL feasibility (C+B<=D) check FAILS",
+                  "TR1 T=300  C=200 B=150 -> REJECT (C+B > D)" );
+
+    /* Step 4: C+B=401 > D=400 (off-by-one boundary) => REJECT, count stays 2 */
+    xRet = xTaskCreateEDF( vAC16Task, "TR2", 512, NULL, 2,
+                           MS( 400 ), MS( 400 ), MS( 300 ), MS( 101 ), NULL );
+    prvAC16Check( xRet, pdFAIL, 2, &uxPass, &uxFail,
+                  "C+B=300+101=401 > D=400 => boundary off-by-one, LL feasibility FAILS",
+                  "TR2 T=400  C=300 B=101 -> REJECT (C+B = D+1)" );
+
+    /* Step 5: C+B=130 <= 200 OK, but sum=0.60+0.65=1.25 > 1.0 => REJECT, count stays 2 */
+    xRet = xTaskCreateEDF( vAC16Task, "TR3", 512, NULL, 2,
+                           MS( 200 ), MS( 200 ), MS( 130 ), MS( 0 ), NULL );
+    prvAC16Check( xRet, pdFAIL, 2, &uxPass, &uxFail,
+                  "C+B=130+0=130 <= D=200 OK; U=130/200=0.65; sum=0.60+0.65=1.25 > 1.0 => utilisation FAILS",
+                  "TR3 T=200  C=130 B=0   -> REJECT (sum U > 1.0)" );
+
+    /* Step 6: U=0.05, C+B=150 <= 2000, sum=0.65 => ADMIT, count 2->3 */
+    xRet = xTaskCreateEDF( vAC16Task, "T3", 512, NULL, 2,
+                           MS( 2000 ), MS( 2000 ), MS( 100 ), MS( 50 ), NULL );
+    prvAC16Check( xRet, pdPASS, 3, &uxPass, &uxFail,
+                  "C+B=100+50=150 <= D=2000 OK; U=100/2000=0.05; sum=0.65 <= 1.0",
+                  "T3  T=2000 C=100 B=50  -> ADMIT" );
+
+    /* ------------------------------------------------------------------ */
+    printf( "\r\n--- Demand-bound path (constrained deadline, D < T) ---\r\n" );
+
+    /* Step 7: D=800 < T=1000 triggers demand path.
+     * At t=800: T2(floor(800/500)*150=150) + T4(floor(1000/1000)*100=100) = 250 comp
+     *           max_B of tasks with D<=800: T2(B=50), T4(B=50) => max_B=50
+     *           h(800) = 250 + 50 = 300 <= 800 => ADMIT, count 3->4 */
+    xRet = xTaskCreateEDF( vAC16Task, "T4", 512, NULL, 2,
+                           MS( 1000 ), MS( 800 ), MS( 100 ), MS( 50 ), NULL );
+    prvAC16Check( xRet, pdPASS, 4, &uxPass, &uxFail,
+                  "D=800<T=1000 => demand path; h(800)=T2(150)+T4(100)+max_B(50)=300 <= 800",
+                  "T4  T=1000 D=800 C=100 B=50  -> ADMIT (demand OK)" );
+
+    /* Step 8: Large B pushes demand over the bound.
+     * At t=800: T2(150)+T4(100)+TR4(200)=450 comp
+     *           max_B of tasks with D<=800: T2(50), T4(50), TR4(400) => max_B=400
+     *           h(800) = 450 + 400 = 850 > 800 => REJECT, count stays 4 */
+    xRet = xTaskCreateEDF( vAC16Task, "TR4", 512, NULL, 2,
+                           MS( 800 ), MS( 800 ), MS( 200 ), MS( 400 ), NULL );
+    prvAC16Check( xRet, pdFAIL, 4, &uxPass, &uxFail,
+                  "h(800)=T2(150)+T4(100)+TR4(200)+max_B(400)=850 > 800 => demand bound FAILS",
+                  "TR4 T=800  D=800 C=200 B=400 -> REJECT (h(800) > 800)" );
+
+    /* ------------------------------------------------------------------ */
+    printf( "\r\n=== Admission control results: %lu/%lu passed ===\r\n",
+            ( unsigned long ) uxPass,
+            ( unsigned long ) ( uxPass + uxFail ) );
+
+    if( uxFail == 0 )
+    {
+        printf( "ALL ADMISSION CONTROL CHECKS PASSED\r\n" );
+    }
+
+    /* Admitted tasks (T1-T4) run as simple periodic tasks after scheduler starts. */
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 16 */
+
+/* -----------------------------------------------------------------------
+ * TEST 11 — Stack sharing quantitative study: NO sharing (baseline)
+ * TEST 12 — Stack sharing quantitative study: WITH sharing (dispatcher)
+ *
+ *   Both tests use 100 jobs with T=1000, D=1000, C=9 ms each.
+ *
+ *   Test 11: Creates 100 separate EDF tasks, each with its own 256-word stack.
+ *            Total stack memory = 100 × 256 × 4 = 102,400 bytes.
+ *
+ *   Test 12: Creates 1 dispatcher EDF task via xTaskCreateEDFSharedGroup().
+ *            100 jobs share a single 256-word stack.
+ *            Total stack memory = 1 × 256 × 4 = 1,024 bytes.
+ *
+ *   Compare heap usage before/after to measure actual savings.
+ * this is the quantitative study for the assignment spec
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 11 ) || ( TEST_CASE == 12 )
+
+/* One-shot job function: busy-wait 9 ms then return. */
+static void vSharedJob( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xS = xTaskGetTickCount();
+    while( ( xTaskGetTickCount() - xS ) < MS( 9 ) ) { __asm volatile ( "nop" ); }
+}
+
+/* Looping task for non-shared (Test 11) baseline. */
+static void vSeparateEDFTask( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        vSharedJob( NULL );
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+
+    const UBaseType_t uxJobCount    = 100U;
+    const TickType_t  xPeriod       = MS( 1000 );
+    const TickType_t  xDeadline     = MS( 1000 );
+    const TickType_t  xWCETPerJob   = MS( 9 );
+    const configSTACK_DEPTH_TYPE uxStackDepth = 256;
+
+    size_t xHeapBefore = xPortGetFreeHeapSize();
+
+    #if ( TEST_CASE == 11 )
+    {
+        printf( "\r\n=== Test 11: 100 tasks WITHOUT stack sharing ===\r\n" );
+
+        UBaseType_t uxAdmitted = 0;
+
+        for( UBaseType_t i = 0U; i < uxJobCount; i++ )
+        {
+            char cName[ configMAX_TASK_NAME_LEN ];
+            snprintf( cName, sizeof( cName ), "T_%02lu", ( unsigned long ) i );
+
+            BaseType_t xResult = xTaskCreateEDF( vSeparateEDFTask, cName,
+                                                  uxStackDepth, NULL, 2,
+                                                  xPeriod, xDeadline, xWCETPerJob,
+                                                  0, NULL );
+            if( xResult == pdPASS )
+            {
+                uxAdmitted++;
+            }
+            else
+            {
+                printf( "  Task %lu rejected\r\n", ( unsigned long ) i );
+                break;
+            }
+        }
+
+        size_t xHeapAfter = xPortGetFreeHeapSize();
+        size_t xUsed = xHeapBefore - xHeapAfter;
+
+        printf( "  Admitted: %lu / %lu\r\n", ( unsigned long ) uxAdmitted,
+                ( unsigned long ) uxJobCount );
+        printf( "  Heap before: %lu bytes\r\n", ( unsigned long ) xHeapBefore );
+        printf( "  Heap after:  %lu bytes\r\n", ( unsigned long ) xHeapAfter );
+        printf( "  Stack memory used: %lu bytes\r\n", ( unsigned long ) xUsed );
+        printf( "  Per-task stack: %lu words × 4 = %lu bytes\r\n",
+                ( unsigned long ) uxStackDepth,
+                ( unsigned long ) ( uxStackDepth * 4U ) );
+    }
+    #else /* TEST_CASE == 12 */
+    {
+        printf( "\r\n=== Test 12: 100 jobs WITH stack sharing (dispatcher) ===\r\n" );
+
+        BaseType_t xResult = xTaskCreateEDFSharedGroup(
+                                 vSharedJob, "SharedGrp",
+                                 uxStackDepth, uxJobCount, 2,
+                                 xPeriod, xDeadline, xWCETPerJob,
+                                 0, NULL );
+
+        size_t xHeapAfter = xPortGetFreeHeapSize();
+        size_t xUsed = xHeapBefore - xHeapAfter;
+
+        printf( "  Result: %s\r\n", ( xResult == pdPASS ) ? "ADMITTED" : "REJECTED" );
+        printf( "  Jobs in group: %lu\r\n", ( unsigned long ) uxJobCount );
+        printf( "  Heap before: %lu bytes\r\n", ( unsigned long ) xHeapBefore );
+        printf( "  Heap after:  %lu bytes\r\n", ( unsigned long ) xHeapAfter );
+        printf( "  Stack memory used: %lu bytes\r\n", ( unsigned long ) xUsed );
+        printf( "  Shared stack: %lu words × 4 = %lu bytes\r\n",
+                ( unsigned long ) uxStackDepth,
+                ( unsigned long ) ( uxStackDepth * 4U ) );
+    }
+    #endif
+
+    printf( "\r\n" );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 11 || TEST_CASE == 12 */

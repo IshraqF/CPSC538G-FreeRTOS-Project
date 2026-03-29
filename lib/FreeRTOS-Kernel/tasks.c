@@ -200,10 +200,34 @@
         #define taskSELECT_HIGHEST_PRIORITY_TASK()                                                              \
     do {                                                                                                        \
         /* EDF tasks take absolute priority over all fixed-priority tasks. */                                   \
+        TCB_t * pxEDFCandidate = NULL;                                                                          \
+                                                                                                                \
         if( ( configUSE_EDF_SCHEDULER == 1 ) &&                                                                 \
             ( listLIST_IS_EMPTY( &xEDFReadyTasksList ) == pdFALSE ) )                                           \
         {                                                                                                       \
-            pxCurrentTCB = listGET_OWNER_OF_HEAD_ENTRY( &xEDFReadyTasksList );                                  \
+            const ListItem_t * pxEndMarker = listGET_END_MARKER( &xEDFReadyTasksList );                         \
+            ListItem_t * pxIterator = listGET_HEAD_ENTRY( &xEDFReadyTasksList );                                \
+                                                                                                                \
+            while( pxIterator != ( ListItem_t * ) pxEndMarker )                                                 \
+            {                                                                                                   \
+                TCB_t * pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );                              \
+                                                                                                                \
+                if( ( configUSE_SRP != 1 ) ||                                                                   \
+                    ( pxTCB == pxCurrentTCB ) ||                                                                 \
+                    ( pxTCB->xPreemptionLevel < xSRPCurrentCeiling ) ||                                         \
+                    prvSRPTaskOwnsCeiling( pxTCB ) )                                                            \
+                {                                                                                               \
+                    pxEDFCandidate = pxTCB;                                                                     \
+                    break;                                                                                      \
+                }                                                                                                \
+                                                                                                                \
+                pxIterator = listGET_NEXT( pxIterator );                                                        \
+            }                                                                                                   \
+        }                                                                                                       \
+                                                                                                                \
+        if( pxEDFCandidate != NULL )                                                                            \
+        {                                                                                                       \
+            pxCurrentTCB = pxEDFCandidate;                                                                      \
                                                                                                                 \
             /* Log the switch event into the ring buffer. */                                                    \
             if( configEDF_ENABLE_DEBUG_LOG == 1 )                                                               \
@@ -544,6 +568,7 @@ PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Ta
         TickType_t xPeriod;
         TickType_t xDeadline;          /**< Relative deadline in ticks. */
         TickType_t xComputationTime;   /**< WCET in ticks. */
+        TickType_t xMaxBlockingTime;   /**< Worst case SRP blocking time in ticks */
         BaseType_t xValid;             /**< pdTRUE when slot is occupied. */
     } EDFTaskParams_t;
 
@@ -578,11 +603,48 @@ PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Ta
 
     #if ( configUSE_SRP == 1 )
         /* SRP system ceiling stack, each entry is a resource ceiling
-         * pushed when a mutex with a non-zero ceiling is acquired */
-        PRIVILEGED_DATA static TickType_t  xSRPCeilingStack[ configSRP_MAX_CEILING_DEPTH ];
+         * pushed when a mutex with a non-zero ceiling is acquired
+         * Also store the owner TCB so scheduler can let a
+         * resource-holding task resume even when its preemption level
+         * equals system ceiling */
+        typedef struct
+        {
+            TickType_t xCeiling;
+            TCB_t *    pxOwner;
+        } SRPCeilingEntry_t;
+        PRIVILEGED_DATA static SRPCeilingEntry_t xSRPCeilingStack[ configSRP_MAX_CEILING_DEPTH ];
         PRIVILEGED_DATA static UBaseType_t uxSRPCeilingStackTop = ( UBaseType_t ) 0U;
         PRIVILEGED_DATA static TickType_t  xSRPCurrentCeiling   = portMAX_DELAY;
-        /* xSRPCurrentCeiling tracks the runtime minimum, portMAX_DELAY means no ceiling active */
+
+        /* Returns true if TCB owns any entry on the SRP ceiling stack,
+         * i.e., it holds a resource with ceiling was pushed */
+        static inline BaseType_t prvSRPTaskOwnsCeiling( const TCB_t * pxTCB )
+        {
+            UBaseType_t ux;
+
+            for( ux = ( UBaseType_t ) 0U; ux < uxSRPCeilingStackTop; ux++ )
+            {
+                if( xSRPCeilingStack[ ux ].pxOwner == pxTCB )
+                {
+                    return pdTRUE;
+                }
+            }
+
+            return pdFALSE;
+        }
+
+        #define srpEVENT_LOG_SIZE   ( ( UBaseType_t ) 16U )
+        typedef struct
+        {
+            char       cName[ configMAX_TASK_NAME_LEN ];
+            TickType_t xTick;
+            TickType_t xCeiling;       /* resource ceiling involved */
+            uint8_t    ucEvent;        /* 'L' = lock, 'U' = unlock */
+        } SRPEventEntry_t;
+
+        PRIVILEGED_DATA static volatile SRPEventEntry_t xSRPEventLog[ srpEVENT_LOG_SIZE ];
+        PRIVILEGED_DATA static volatile UBaseType_t     uxSRPEventLogHead = ( UBaseType_t ) 0U;
+        PRIVILEGED_DATA static volatile UBaseType_t     uxSRPEventLogTail = ( UBaseType_t ) 0U;
     #endif /* configUSE_SRP */
 #endif /* configUSE_EDF_SCHEDULER */
 
@@ -704,13 +766,16 @@ static void prvInitialiseTaskLists( void ) PRIVILEGED_FUNCTION;
     static void         prvEDFCheckDeadlineMiss( TickType_t xCurrentTick ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvIsImplicitDeadlineSet( void ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControlLL( TickType_t xNewPeriod,
-                                                TickType_t xNewComputationTime ) PRIVILEGED_FUNCTION;
+                                                TickType_t xNewComputationTime,
+                                                TickType_t xNewBlockingTime ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
                                                     TickType_t xNewDeadline,
-                                                    TickType_t xNewComputationTime ) PRIVILEGED_FUNCTION;
+                                                    TickType_t xNewComputationTime,
+                                                    TickType_t xNewBlockingTime ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControl( TickType_t xPeriod,
                                               TickType_t xDeadline,
-                                              TickType_t xComputationTime ) PRIVILEGED_FUNCTION;
+                                              TickType_t xComputationTime,
+                                              TickType_t xBlockingTime ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 
 /*
@@ -2536,6 +2601,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                                 TickType_t xPeriod,
                                 TickType_t xDeadline,
                                 TickType_t xComputationTime,
+                                TickType_t xBlockingTime,
                                 TaskHandle_t * const pxCreatedTask )
     {
         BaseType_t xReturn;
@@ -2546,7 +2612,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
         /* --- Admission control --- */
         taskENTER_CRITICAL();
         {
-            xReturn = prvEDFAdmissionControl( xPeriod, xDeadline, xComputationTime );
+            xReturn = prvEDFAdmissionControl( xPeriod, xDeadline, xComputationTime, xBlockingTime );
         }
         taskEXIT_CRITICAL();
 
@@ -2597,6 +2663,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                         xEDFAdmittedTasks[ uxSlot ].xPeriod          = xPeriod;
                         xEDFAdmittedTasks[ uxSlot ].xDeadline         = xDeadline;
                         xEDFAdmittedTasks[ uxSlot ].xComputationTime  = xComputationTime;
+                        xEDFAdmittedTasks[ uxSlot ].xMaxBlockingTime  = xBlockingTime;
                         xEDFAdmittedTasks[ uxSlot ].xValid            = pdTRUE;
                         uxEDFAdmittedTaskCount++;
                         break;
@@ -6381,7 +6448,8 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
     {
         configASSERT( uxSRPCeilingStackTop < ( UBaseType_t ) configSRP_MAX_CEILING_DEPTH );
 
-        xSRPCeilingStack[ uxSRPCeilingStackTop ] = xCeiling;
+        xSRPCeilingStack[ uxSRPCeilingStackTop ].xCeiling = xCeiling;
+        xSRPCeilingStack[ uxSRPCeilingStackTop ].pxOwner  = pxCurrentTCB;
         uxSRPCeilingStackTop++;
 
         /* Update runtime minimum, deadline inverse proportional to ceiling */
@@ -6389,12 +6457,35 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
         {
             xSRPCurrentCeiling = xCeiling;
         }
+
+        /* Log the LOCK event */
+        #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+        {
+            UBaseType_t uxNext = ( uxSRPEventLogHead + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+
+            if( uxNext != uxSRPEventLogTail )
+            {
+                UBaseType_t uxIdx = uxSRPEventLogHead % srpEVENT_LOG_SIZE;
+                strncpy( ( char * ) xSRPEventLog[ uxIdx ].cName,
+                         pxCurrentTCB->pcTaskName,
+                         configMAX_TASK_NAME_LEN - 1 );
+                ( ( char * ) xSRPEventLog[ uxIdx ].cName )[ configMAX_TASK_NAME_LEN - 1 ] = '\0';
+                xSRPEventLog[ uxIdx ].xTick    = xTickCount;
+                xSRPEventLog[ uxIdx ].xCeiling = xCeiling;
+                xSRPEventLog[ uxIdx ].ucEvent  = ( uint8_t ) 'L';
+                uxSRPEventLogHead = uxNext;
+            }
+        }
+        #endif
     }
 
     void vSRPPopCeiling( void )
     {
+        TickType_t xPoppedCeiling;
+
         configASSERT( uxSRPCeilingStackTop > ( UBaseType_t ) 0U );
 
+        xPoppedCeiling = xSRPCeilingStack[ uxSRPCeilingStackTop - 1U ].xCeiling;
         uxSRPCeilingStackTop--;
 
         /* Update runtime minimum by scanning remaining stack */
@@ -6402,19 +6493,54 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 
         for( UBaseType_t ux = ( UBaseType_t ) 0U; ux < uxSRPCeilingStackTop; ux++ )
         {
-            if( xSRPCeilingStack[ ux ] < xSRPCurrentCeiling )
+            if( xSRPCeilingStack[ ux ].xCeiling < xSRPCurrentCeiling )
             {
-                xSRPCurrentCeiling = xSRPCeilingStack[ ux ];
+                xSRPCurrentCeiling = xSRPCeilingStack[ ux ].xCeiling;
             }
         }
+
+        /* Log the unlock */
+        #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+        {
+            UBaseType_t uxNext = ( uxSRPEventLogHead + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+
+            if( uxNext != uxSRPEventLogTail )
+            {
+                UBaseType_t uxIdx = uxSRPEventLogHead % srpEVENT_LOG_SIZE;
+                strncpy( ( char * ) xSRPEventLog[ uxIdx ].cName,
+                         pxCurrentTCB->pcTaskName,
+                         configMAX_TASK_NAME_LEN - 1 );
+                ( ( char * ) xSRPEventLog[ uxIdx ].cName )[ configMAX_TASK_NAME_LEN - 1 ] = '\0';
+                xSRPEventLog[ uxIdx ].xTick    = xTickCount;
+                xSRPEventLog[ uxIdx ].xCeiling = xPoppedCeiling;
+                xSRPEventLog[ uxIdx ].ucEvent  = ( uint8_t ) 'U';
+                uxSRPEventLogHead = uxNext;
+            }
+        }
+        #endif
     }
 
+    /* Use for testing */
     TickType_t xSRPGetCurrentCeiling( void )
     {
         return xSRPCurrentCeiling;
     }
 
+    /* Use for testing */
+    UBaseType_t uxSRPGetCeilingStackDepth( void )
+    {
+        return uxSRPCeilingStackTop;
+    }
+
 #endif /* configUSE_SRP */
+
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    /* Testing function */
+    UBaseType_t uxEDFGetAdmittedCount( void )
+    {
+        return uxEDFAdmittedTaskCount;
+    }
+#endif /* configUSE_EDF_SCHEDULER */
 /*-----------------------------------------------------------*/
 
 static void prvEDFAddToReadyList( TCB_t * pxTCB )
@@ -6488,41 +6614,54 @@ static BaseType_t prvIsImplicitDeadlineSet( void )
 }
 
 static BaseType_t prvEDFAdmissionControlLL( TickType_t xNewPeriod,
-                                            TickType_t xNewComputationTime )
+                                            TickType_t xNewComputationTime,
+                                            TickType_t xNewBlockingTime )
 {
-    uint64_t ullNum = 0ULL;
-    uint64_t ullDen = 1ULL;
+    /*
+     * Compute total utilisation U = sum(C_i / T_i) using fixed-point
+     * arithmetic with a scale factor of 10000 (0.01% resolution).
+     *
+     * With SRP blocking, also check C_i + B_i <= D_i (= T_i for
+     * implicit-deadline) for every admitted task and the new task.
+     */
+    #define LL_SCALE  ( ( uint64_t ) 10000ULL )  /* 1.0 = 10000 */
+
+    uint64_t ullUtilSum = 0ULL;
     UBaseType_t uxIdx;
 
     for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
     {
         if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
         {
-            uint64_t ullTi = ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xPeriod;
-            uint64_t ullCi = ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xComputationTime;
+            ullUtilSum += ( ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xComputationTime * LL_SCALE )
+                          / ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xPeriod;
 
-            /* num/den += Ci/Ti  =>  num = num*Ti + Ci*den; den = den*Ti */
-            ullNum = ullNum * ullTi + ullCi * ullDen;
-            ullDen = ullDen * ullTi;
-
-            /* Early exit if already over-utilised. */
-            if( ullNum >= ullDen )
+            /* SRP feasibility: C_i + B_i must fit within D_i */
+            if( ( xEDFAdmittedTasks[ uxIdx ].xComputationTime +
+                  xEDFAdmittedTasks[ uxIdx ].xMaxBlockingTime ) >
+                xEDFAdmittedTasks[ uxIdx ].xPeriod )
             {
                 return pdFAIL;
             }
         }
     }
 
-    /* Add new task. */
-    ullNum = ullNum * ( uint64_t ) xNewPeriod + ( uint64_t ) xNewComputationTime * ullDen;
-    ullDen = ullDen * ( uint64_t ) xNewPeriod;
+    /* Add new task's contribution */
+    ullUtilSum += ( ( uint64_t ) xNewComputationTime * LL_SCALE )
+                  / ( uint64_t ) xNewPeriod;
 
-    return ( ullNum <= ullDen ) ? pdPASS : pdFAIL;
+    if( ( xNewComputationTime + xNewBlockingTime ) > xNewPeriod )
+    {
+        return pdFAIL;
+    }
+
+    return ( ullUtilSum <= LL_SCALE ) ? pdPASS : pdFAIL;
 }
 
 static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
                                                 TickType_t xNewDeadline,
-                                                TickType_t xNewComputationTime )
+                                                TickType_t xNewComputationTime,
+                                                TickType_t xNewBlockingTime )
 {
     static TickType_t xSchedPoints[ configEDF_MAX_SCHEDULING_POINTS ];
     UBaseType_t uxPtCount = 0U;
@@ -6639,6 +6778,28 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
             ullHt += ullNnew * ( uint64_t ) xNewComputationTime;
         }
 
+        /* SRP: add max{B_i : D_i <= t} to the demand */
+        {
+            TickType_t xMaxB = 0U;
+
+            for( uxTaskIdx = 0U; uxTaskIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxTaskIdx++ )
+            {
+                if( ( xEDFAdmittedTasks[ uxTaskIdx ].xValid == pdTRUE ) &&
+                    ( xEDFAdmittedTasks[ uxTaskIdx ].xDeadline <= xT ) &&
+                    ( xEDFAdmittedTasks[ uxTaskIdx ].xMaxBlockingTime > xMaxB ) )
+                {
+                    xMaxB = xEDFAdmittedTasks[ uxTaskIdx ].xMaxBlockingTime;
+                }
+            }
+
+            if( ( xNewDeadline <= xT ) && ( xNewBlockingTime > xMaxB ) )
+            {
+                xMaxB = xNewBlockingTime;
+            }
+
+            ullHt += ( uint64_t ) xMaxB;
+        }
+
         if( ullHt == 0ULL )
         {
             return pdPASS; /* No demand at this point — all future points also 0. */
@@ -6656,7 +6817,8 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
 
 static BaseType_t prvEDFAdmissionControl( TickType_t xPeriod,
                                           TickType_t xDeadline,
-                                          TickType_t xComputationTime )
+                                          TickType_t xComputationTime,
+                                          TickType_t xBlockingTime )
 {
     BaseType_t xResult;
 
@@ -6674,11 +6836,11 @@ static BaseType_t prvEDFAdmissionControl( TickType_t xPeriod,
     /* Use LL bound only when all tasks (existing + new) are implicit-deadline. */
     if( ( prvIsImplicitDeadlineSet() == pdTRUE ) && ( xDeadline == xPeriod ) )
     {
-        xResult = prvEDFAdmissionControlLL( xPeriod, xComputationTime );
+        xResult = prvEDFAdmissionControlLL( xPeriod, xComputationTime, xBlockingTime );
     }
     else
     {
-        xResult = prvEDFAdmissionControlDemand( xPeriod, xDeadline, xComputationTime );
+        xResult = prvEDFAdmissionControlDemand( xPeriod, xDeadline, xComputationTime, xBlockingTime );
     }
 
     return xResult;
@@ -6734,6 +6896,88 @@ void vEDFDrainSwitchLog( void )
         uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
     }
 }
+
+#if ( configUSE_SRP == 1 )
+/* Use for testing */
+void vSRPDrainEventLog( void )
+{
+    while( uxSRPEventLogTail != uxSRPEventLogHead )
+    {
+        UBaseType_t uxIdx = uxSRPEventLogTail % srpEVENT_LOG_SIZE;
+
+        printf( "[SRP] %c | task=%-16s | tick=%lu | ceiling=%lu\r\n",
+                ( char ) xSRPEventLog[ uxIdx ].ucEvent,
+                ( const char * ) xSRPEventLog[ uxIdx ].cName,
+                ( unsigned long ) xSRPEventLog[ uxIdx ].xTick,
+                ( unsigned long ) xSRPEventLog[ uxIdx ].xCeiling );
+
+        uxSRPEventLogTail = ( uxSRPEventLogTail + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+    }
+}
+#endif /* configUSE_SRP */
+
+/*-----------------------------------------------------------*/
+/* Shared-stack group dispatcher for SRP stack sharing.      */
+/*-----------------------------------------------------------*/
+#if ( configUSE_SRP == 1 )
+
+    typedef struct
+    {
+        TaskFunction_t pxJobFunction;
+        UBaseType_t    uxJobCount;
+    } EDFSharedGroupContext_t;
+
+    static void prvEDFSharedGroupDispatcher( void * pvParameters )
+    {
+        EDFSharedGroupContext_t * pxCtx = ( EDFSharedGroupContext_t * ) pvParameters;
+        TickType_t xLWT = 0;
+
+        for( ;; )
+        {
+            UBaseType_t ux;
+
+            for( ux = 0U; ux < pxCtx->uxJobCount; ux++ )
+            {
+                pxCtx->pxJobFunction( NULL );
+            }
+
+            vTaskDelayEDF( &xLWT );
+        }
+    }
+
+    BaseType_t xTaskCreateEDFSharedGroup( TaskFunction_t pxJobFunction,
+                                          const char * const pcGroupName,
+                                          const configSTACK_DEPTH_TYPE uxStackDepth,
+                                          UBaseType_t uxJobCount,
+                                          UBaseType_t uxPriority,
+                                          TickType_t xPeriod,
+                                          TickType_t xDeadline,
+                                          TickType_t xWCETPerJob,
+                                          TickType_t xBlockingTime,
+                                          TaskHandle_t * const pxCreatedTask )
+    {
+        EDFSharedGroupContext_t * pxCtx;
+        TickType_t xTotalWCET;
+
+        pxCtx = ( EDFSharedGroupContext_t * ) pvPortMalloc( sizeof( EDFSharedGroupContext_t ) );
+
+        if( pxCtx == NULL )
+        {
+            return pdFAIL;
+        }
+
+        pxCtx->pxJobFunction = pxJobFunction;
+        pxCtx->uxJobCount    = uxJobCount;
+
+        xTotalWCET = xWCETPerJob * ( TickType_t ) uxJobCount;
+
+        return xTaskCreateEDF( prvEDFSharedGroupDispatcher, pcGroupName,
+                               uxStackDepth, ( void * ) pxCtx, uxPriority,
+                               xPeriod, xDeadline, xTotalWCET, xBlockingTime,
+                               pxCreatedTask );
+    }
+
+#endif /* configUSE_SRP */
 
 void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
 {

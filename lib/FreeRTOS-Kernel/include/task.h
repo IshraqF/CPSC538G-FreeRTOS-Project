@@ -403,6 +403,7 @@ typedef enum
                                TickType_t xPeriod,
                                TickType_t xDeadline,
                                TickType_t xWCET,
+                               TickType_t xBlockingTime,
                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 
     /* Drain the deadline-miss ring buffer and print events via printf/UART. */
@@ -422,7 +423,23 @@ typedef enum
         void vSRPPushCeiling( TickType_t xCeiling ) PRIVILEGED_FUNCTION;
         void vSRPPopCeiling( void ) PRIVILEGED_FUNCTION;
         TickType_t xSRPGetCurrentCeiling( void ) PRIVILEGED_FUNCTION;
+        UBaseType_t uxSRPGetCeilingStackDepth( void ) PRIVILEGED_FUNCTION;
+        void vSRPDrainEventLog( void ) PRIVILEGED_FUNCTION;
+
+        BaseType_t xTaskCreateEDFSharedGroup( TaskFunction_t pxJobFunction,
+                                              const char * const pcGroupName,
+                                              const configSTACK_DEPTH_TYPE uxStackDepth,
+                                              UBaseType_t uxJobCount,
+                                              UBaseType_t uxPriority,
+                                              TickType_t xPeriod,
+                                              TickType_t xDeadline,
+                                              TickType_t xWCETPerJob,
+                                              TickType_t xBlockingTime,
+                                              TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
     #endif /* configUSE_SRP */
+
+    /* For testing */
+    UBaseType_t uxEDFGetAdmittedCount( void ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
