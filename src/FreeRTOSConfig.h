@@ -57,8 +57,12 @@
 #define configEDF_ENABLE_DEBUG_LOG              1
 
 /* SRP */
-#define configUSE_SRP                           1
+#define configUSE_SRP                           0
 #define configSRP_MAX_CEILING_DEPTH             8
+
+/* Multicore support, these only matter if configNUMBER_OF_CORES > 1 */
+#define configGLOBAL_EDF_ENABLE                 1
+#define configPARTITIONED_EDF_ENABLE            !( configGLOBAL_EDF_ENABLE )
 
 #define configIDLE_SHOULD_YIELD                 1
 
@@ -114,10 +118,10 @@
 
 #if FREE_RTOS_KERNEL_SMP // set by the RP2040 SMP port of FreeRTOS
 /* SMP port only */
-#define configNUMBER_OF_CORES                   1
+#define configNUMBER_OF_CORES                   2
 #define configTICK_CORE                         0
 #define configRUN_MULTIPLE_PRIORITIES           1
-#define configUSE_CORE_AFFINITY                 0
+#define configUSE_CORE_AFFINITY                 1
 #endif
 
 /* RP2040 specific */
