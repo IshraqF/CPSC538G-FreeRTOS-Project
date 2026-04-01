@@ -1225,6 +1225,84 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
                             &pxCurrentTCBs[ xCoreID ]->xStateListItem );
         }
 
+        /* Global EDF; pick ready task with earliest deadline for current core */
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configGLOBAL_EDF_ENABLE == 1 ) )
+        {
+            if( listLIST_IS_EMPTY( &xEDFReadyTasksList ) == pdFALSE )
+            {
+                const ListItem_t * pxEndMarker = listGET_END_MARKER( &xEDFReadyTasksList );
+                ListItem_t * pxIterator;
+
+                for( pxIterator = listGET_HEAD_ENTRY( &xEDFReadyTasksList );
+                     pxIterator != pxEndMarker;
+                     pxIterator = listGET_NEXT( pxIterator ) )
+                {
+                    pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );
+
+                    if( pxTCB == pxCurrentTCBs[ xCoreID ] )
+                    {
+                        /* Already running on this core, so keep */
+                        pxTCB->xTaskRunState = xCoreID;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                    else if( pxTCB->xTaskRunState == taskTASK_NOT_RUNNING )
+                    {
+                        #if ( configUSE_CORE_AFFINITY == 1 )
+                            if( ( pxTCB->uxCoreAffinityMask & ( ( UBaseType_t ) 1U << ( UBaseType_t ) xCoreID ) ) == 0U )
+                            {
+                                /* Core affinity forbids this, so skip */
+                                continue;
+                            }
+                        #endif
+
+                        /* Evict current task to schedule this */
+                        pxCurrentTCBs[ xCoreID ]->xTaskRunState = taskTASK_NOT_RUNNING;
+                        #if ( configUSE_CORE_AFFINITY == 1 )
+                            pxPreviousTCB = pxCurrentTCBs[ xCoreID ];
+                        #endif
+                        pxTCB->xTaskRunState = xCoreID;
+                        pxCurrentTCBs[ xCoreID ] = pxTCB;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                    else
+                    {
+                        /* Task is running on another core, so skip */
+                    }
+                }
+
+                /* Log */
+                if( ( xTaskScheduled == pdTRUE ) && ( configEDF_ENABLE_DEBUG_LOG == 1 ) )
+                {
+                    UBaseType_t uxWriteSlot = uxEDFSwitchLogHead % edfSWITCH_LOG_SIZE;
+                    UBaseType_t uxCharIdx;
+
+                    for( uxCharIdx = 0U; uxCharIdx < ( UBaseType_t ) configMAX_TASK_NAME_LEN; uxCharIdx++ )
+                    {
+                        xEDFSwitchLog[ uxWriteSlot ].cName[ uxCharIdx ] = pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ];
+                        if( pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ] == '\0' ) { break; }
+                    }
+                    xEDFSwitchLog[ uxWriteSlot ].xTick     = xTickCount;
+                    xEDFSwitchLog[ uxWriteSlot ].xDeadline = pxCurrentTCBs[ xCoreID ]->xJobDeadline;
+                    uxEDFSwitchLogHead = ( uxEDFSwitchLogHead + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+
+                    if( uxEDFSwitchLogHead == uxEDFSwitchLogTail )
+                    {
+                        uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+                    }
+                }
+
+                if( xTaskScheduled == pdTRUE )
+                {
+                    /* EDF task, skip fixed-priority selection and jump to
+                     * core affinity eviction handling */
+                    goto edf_selected;
+                }
+            }
+        }
+        #endif /* configUSE_EDF_SCHEDULER && configGLOBAL_EDF_ENABLE */
+
         while( xTaskScheduled == pdFALSE )
         {
             #if ( configRUN_MULTIPLE_PRIORITIES == 0 )
@@ -1364,6 +1442,10 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             }
         }
         #endif /* #if ( configRUN_MULTIPLE_PRIORITIES == 0 ) */
+
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configGLOBAL_EDF_ENABLE == 1 ) )
+            edf_selected:
+        #endif
 
         #if ( configUSE_CORE_AFFINITY == 1 )
         {
