@@ -438,6 +438,11 @@ typedef enum
                                               TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
     #endif /* configUSE_SRP */
 
+    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+        void vTaskEDFSetCore( TaskHandle_t xTask, BaseType_t xCoreID ) PRIVILEGED_FUNCTION;
+        void vTaskEDFClearCore( TaskHandle_t xTask ) PRIVILEGED_FUNCTION;
+    #endif
+
     /* For testing */
     UBaseType_t uxEDFGetAdmittedCount( void ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
