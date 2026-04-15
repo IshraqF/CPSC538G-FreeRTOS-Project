@@ -7,7 +7,7 @@
 
 /* Select which test to run (1–7). */
 #ifndef TEST_CASE
-    #define TEST_CASE 6
+    #define TEST_CASE 17
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -1309,3 +1309,340 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 11 || TEST_CASE == 12 */
+
+/* -----------------------------------------------------------------------
+ * TEST 17 — Global EDF: Two tasks on two cores, both run simultaneously
+ *   Task A: T=200, D=200, C=80   U=0.4
+ *   Task B: T=200, D=200, C=80   U=0.4
+ *   Total U=0.8 on 2 cores. Both should run at the same time with no
+ *   deadline misses.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 17 )
+
+static void vTask17A( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 80 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask17B( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 80 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Global EDF Test 17: Two tasks, two cores ===\r\n" );
+    printf( "Both tasks should run simultaneously, no misses\r\n\r\n" );
+
+    xTaskCreateEDF( vTask17A, "G17_A", 512, NULL, 2,
+                    MS( 200 ), MS( 200 ), MS( 80 ), 0, NULL );
+    xTaskCreateEDF( vTask17B, "G17_B", 512, NULL, 2,
+                    MS( 200 ), MS( 200 ), MS( 80 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 17 */
+
+/* -----------------------------------------------------------------------
+ * TEST 18 — Global EDF: Three tasks on two cores with migration
+ *   Task A: T=100, D=100, C=30   U=0.3
+ *   Task B: T=150, D=150, C=40   U=0.27
+ *   Task C: T=200, D=200, C=50   U=0.25
+ *   Total U=0.82 on 2 cores. Tasks must migrate between cores to meet
+ *   all deadlines.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 18 )
+
+static void vTask18A( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 30 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask18B( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask18C( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 50 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Global EDF Test 18: Three tasks, two cores ===\r\n" );
+    printf( "Tasks should migrate between cores, no misses\r\n\r\n" );
+
+    xTaskCreateEDF( vTask18A, "G18_A", 512, NULL, 2,
+                    MS( 100 ), MS( 100 ), MS( 30 ), 0, NULL );
+    xTaskCreateEDF( vTask18B, "G18_B", 512, NULL, 2,
+                    MS( 150 ), MS( 150 ), MS( 40 ), 0, NULL );
+    xTaskCreateEDF( vTask18C, "G18_C", 512, NULL, 2,
+                    MS( 200 ), MS( 200 ), MS( 50 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 18 */
+
+/* -----------------------------------------------------------------------
+ * TEST 19 — Global EDF: Admission control rejects at U > 2.0
+ *   Task A: T=100, D=100, C=80   U=0.8
+ *   Task B: T=100, D=100, C=80   U=0.8
+ *   Task C: T=100, D=100, C=80   U=0.8  (total 2.4 > 2.0, rejected)
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 19 )
+
+static void vTask19Body( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 80 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Global EDF Test 19: Admission control U>2.0 ===\r\n" );
+
+    BaseType_t xA = xTaskCreateEDF( vTask19Body, "G19_A", 512, NULL, 2,
+                                    MS( 100 ), MS( 100 ), MS( 80 ), 0, NULL );
+    BaseType_t xB = xTaskCreateEDF( vTask19Body, "G19_B", 512, NULL, 2,
+                                    MS( 100 ), MS( 100 ), MS( 80 ), 0, NULL );
+    BaseType_t xC = xTaskCreateEDF( vTask19Body, "G19_C", 512, NULL, 2,
+                                    MS( 100 ), MS( 100 ), MS( 80 ), 0, NULL );
+
+    printf( "Task A: %s\r\n", xA == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task B: %s\r\n", xB == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task C: %s\r\n", xC == pdPASS ? "ADMITTED" : "REJECTED" );
+
+    printf( "Expected: A=ADMITTED, B=ADMITTED, C=REJECTED\r\n" );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 19 */
+
+/* -----------------------------------------------------------------------
+ * TEST 20 — Accept new EDF tasks while system is running
+ *   Spawner task creates a new EDF task every 500ms (up to 4 tasks).
+ *   Each spawned task: T=200, D=200, C=20.
+ *   Verifies dynamic admission works after scheduler has started.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 20 )
+
+static void vTask20Worker( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 20 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask20Spawner( void * pvParams )
+{
+    ( void ) pvParams;
+    static const char * pcNames[] = { "DYN_1", "DYN_2", "DYN_3", "DYN_4" };
+    UBaseType_t ux;
+
+    for( ux = 0; ux < 4; ux++ )
+    {
+        vTaskDelay( MS( 500 ) );
+
+        BaseType_t xRet = xTaskCreateEDF( vTask20Worker, pcNames[ ux ], 512, NULL, 2,
+                                          MS( 200 ), MS( 200 ), MS( 20 ), 0, NULL );
+
+        printf( "t=%lu  Created %s: %s\r\n",
+                ( unsigned long ) xTaskGetTickCount(),
+                pcNames[ ux ],
+                xRet == pdPASS ? "ADMITTED" : "REJECTED" );
+    }
+
+    printf( "Spawner done, admitted count = %lu\r\n",
+            ( unsigned long ) uxEDFGetAdmittedCount() );
+
+    /* Spawner has nothing left to do */
+    vTaskDelete( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Test 20: Dynamic task creation at runtime ===\r\n" );
+    printf( "Spawner creates 4 EDF tasks 500ms apart\r\n\r\n" );
+
+    xTaskCreate( vTask20Spawner, "Spawner", 512, NULL, 3, NULL );
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 20 */
+
+/* -----------------------------------------------------------------------
+ * TEST 21 — ~100 periodic EDF tasks running simultaneously
+ *   100 tasks, each T=1000, D=1000, C=1. Total U = 100*(1/1000) = 0.1
+ *   on 2 cores. Should all be admitted and run with no deadline misses.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 21 )
+
+static void vTask21Body( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 1 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Test 21: 100 periodic EDF tasks ===\r\n" );
+
+    char cName[ configMAX_TASK_NAME_LEN ];
+    UBaseType_t uxAdmitted = 0;
+    UBaseType_t ux;
+
+    for( ux = 0; ux < 100; ux++ )
+    {
+        snprintf( cName, sizeof( cName ), "E%lu", ( unsigned long ) ux );
+        BaseType_t xRet = xTaskCreateEDF( vTask21Body, cName, 256, NULL, 2,
+                                          MS( 1000 ), MS( 1000 ), MS( 1 ), 0, NULL );
+        if( xRet == pdPASS )
+        {
+            uxAdmitted++;
+        }
+    }
+
+    printf( "Admitted %lu / 100 tasks\r\n", ( unsigned long ) uxAdmitted );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 21 */
+
+/* -----------------------------------------------------------------------
+ * TEST 22 — Overrun (deadline miss) detection
+ *   Task A: T=100, D=100, C=50 (declared WCET)
+ *   Task A actually runs for 120ms on first job, exceeding its deadline.
+ *   The miss log should report the overrun.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 22 )
+
+static volatile UBaseType_t uxJob22Count = 0;
+
+static void vTask22Overrun( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        uxJob22Count++;
+        TickType_t xRunTime;
+
+        if( uxJob22Count <= 2 )
+        {
+            /* First two jobs: overrun deliberately */
+            xRunTime = MS( 120 );
+            printf( "Job %lu: running 120ms (will miss D=100)\r\n",
+                    ( unsigned long ) uxJob22Count );
+        }
+        else
+        {
+            /* Subsequent jobs: behave normally */
+            xRunTime = MS( 50 );
+        }
+
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xRunTime ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Test 22: Overrun / deadline miss detection ===\r\n" );
+    printf( "Task runs 120ms with D=100, expect miss log entries\r\n\r\n" );
+
+    xTaskCreateEDF( vTask22Overrun, "OVERRUN", 512, NULL, 2,
+                    MS( 200 ), MS( 100 ), MS( 50 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 22 */
