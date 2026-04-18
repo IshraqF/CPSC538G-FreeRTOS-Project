@@ -1489,7 +1489,7 @@ int main( void )
 static void vTask20Worker( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xLWT = 0;
+    TickType_t xLWT = xTaskGetTickCount();
     for( ;; )
     {
         TickType_t xS = xTaskGetTickCount();

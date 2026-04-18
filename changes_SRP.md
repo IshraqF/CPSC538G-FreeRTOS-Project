@@ -79,7 +79,7 @@ If no EDF task passes, default to fixed priority
 - `xSRPCeilingStack[]`: array holding the actual ceiling stack, resource ceilings get push/popped here
 - `uxSRPCeilingStackTop`: tracks how many entries are on the ceiling stack
 - `xSRPCurrentCeiling`: current system ceiling (smallest/ most restrictive deadline among held resources), if no resource held, equals `portMAX_DELAY`
-- **`SRPEventEntry_t`** — struct for logging lock/unlock events (stores task name, tick, ceiling value, and whether it was a lock or unlock).
+- `SRPEventEntry_t`: struct for logging lock/unlock events (stores task name, tick, ceiling value, and whether it was a lock or unlock)
 - `xSRPEventLog[]`: ring buffer stores the last 16 SRP events
 - `uxSRPEventLogHead / uxSRPEventLogTail` head/tail indices for ring buffer
 - `EDFSharedGroupContext_t`: context for shared-stack dispatcher, stores job function pointer and number of jobs sharing the stack
