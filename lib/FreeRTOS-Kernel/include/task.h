@@ -436,6 +436,11 @@ typedef enum
     BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
                                void         ( *pxFunction )( void * ),
                                void         * pvParameters ) PRIVILEGED_FUNCTION;
+
+    BaseType_t xCBSSubmitJobFromISR( TaskHandle_t   xServer,
+                                      void         ( *pxFunction )( void * ),
+                                      void         * pvParameters,
+                                      BaseType_t   * pxHigherPriorityTaskWoken ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_CBS_SERVER */
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )

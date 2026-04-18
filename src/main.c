@@ -379,7 +379,12 @@ int main( void )
  *
  * Hard periodic task τ1:  C=40ms, T=70ms, D=70ms  → U  = 4/7 ≈ 0.571
  * CBS server:             Qs=30ms, Ts=80ms          → Us = 3/8 = 0.375
- * Total utilization:      0.946 ≤ 1.0 (schedulable)
+ * τ2 submitter (EDF):     T=100ms, D=5ms,   C=1ms  → always preempts τ1
+ * Total utilization:      ~0.956 ≤ 1.0 (schedulable)
+ *
+ * τ2 is an EDF task that submits one job to the CBS server each period.
+ * Being EDF-scheduled it runs at the right time without needing hardware
+ * interrupts and without being blocked by τ1.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 8 )
 
@@ -398,53 +403,80 @@ static void vTask1( void * pvParams )
     }
 }
 
-/* τ2 job body — runs inside the CBS server each activation. */
+/* τ2 job body — runs inside the CBS server each activation.
+ *
+ * Iteration-based busy-wait so only actual CPU time is counted.
+ * A volatile counter only advances when this task is on the CPU;
+ * preemption by tau1 pauses it, so the remaining 10ms executes
+ * after tau1's period ends — leaving cs≈20 and triggering Rule 2.
+ *
+ * CBS_JOB_ITERS is calibrated empirically: the output showed that
+ * 1,250,000 iterations consumed >60ms of CPU (Rule 3 fired twice
+ * before the job finished), so we scale to 40ms: ×(40/60) ≈ 830000.
+ * If Rule 3 fires more than once, halve the count; if the job
+ * finishes before Rule 3 fires at all, double it. */
+#define CBS_JOB_ITERS  400000UL
+
 static void vTask2Job( void * pvParams )
 {
     ( void ) pvParams;
-    TickType_t xS = xTaskGetTickCount();
-    while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
-    /* job body completes — [S] log already records the context switches */
+    volatile uint32_t i;
+    for( i = 0UL; i < CBS_JOB_ITERS; i++ ) { __asm volatile ( "nop" ); }
 }
 
 static TaskHandle_t xCBSServerHandle = NULL;
 
-/* Soft periodic task τ2: activates every ~100ms, submits 40ms job to CBS.
- * Initial offset of 30ms. */
+/* τ2 submitter: EDF periodic task, T=100ms, D=5ms, C≈1ms.
+ * Submits exactly 2 jobs to demonstrate all three CBS rules:
+ *   Job 1 (t=30)  → Rule 1 (fresh deadline) + Rule 3 (budget exhausted at t=70)
+ *   Job 2 (t=130) → Rule 2 (reuse deadline, condition false, cs≈19)
+ * After 2 submissions τ2 suspends itself so the CBS server drains cleanly
+ * without an infinite job backlog (CBS bandwidth 37.5% < job rate 41ms/100ms). */
 static void vTask2( void * pvParams )
 {
     ( void ) pvParams;
 
-    vTaskDelay( MS( 30 ) );   /* first arrival at t=30ms (book: r1=3) */
+    /* Initial offset: block for 30ms so the EDF loop starts at t=30ms.
+     * vTaskDelayEDF then targets 30+100=130ms for the second submission. */
+    vTaskDelay( MS( 30 ) );
 
-    for( ; ; )
+    TickType_t xLWT = xTaskGetTickCount();   /* ≈ 30 */
+
+    int i;
+    for( i = 0; i < 2; i++ )
     {
-        printf( "[tau2] arrive at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+        printf( "[tau2] submit at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
         xCBSSubmitJob( xCBSServerHandle, vTask2Job, NULL );
-        vTaskDelay( MS( 100 ) );   /* soft period ~100ms */
+        vTaskDelayEDF( &xLWT );
     }
+
+    /* Both jobs submitted — suspend so the CBS server drains without
+     * accumulating a backlog.  The test is complete once job 2 finishes. */
+    printf( "[tau2] done submitting — suspending\r\n" );
+    vTaskSuspend( NULL );
 }
 
 int main( void )
 {
     stdio_init_all();
     printf( "\r\n=== CBS Test 8 ===\r\n" );
-    printf( "tau1: C=40ms T=70ms D=70ms  (U=0.571)\r\n" );
-    printf( "CBS:  Qs=30ms Ts=80ms       (Us=0.375)\r\n" );
+    printf( "tau1: C=40ms T=70ms  D=70ms  (U=0.571)\r\n" );
+    printf( "CBS:  Qs=30ms Ts=80ms        (Us=0.375)\r\n" );
+    printf( "tau2: T=100ms D=5ms   C=1ms  (submitter, always preempts tau1)\r\n" );
 
     /* Hard periodic task τ1. */
     xTaskCreateEDF( vTask1, "tau1", 512, NULL, 2,
                     MS( 70 ), MS( 70 ), MS( 40 ), NULL );
 
     /* CBS server: Qs=30ms, Ts=80ms. */
-    xTaskCreateCBS( "tau2", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
+    xTaskCreateCBS( "CBS", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
 
-    /* Soft periodic task τ2 — priority 4 so it submits jobs on time without
-     * being blocked by tau1 (EDF pri 2) or UARTDrain (pri 3). It runs for
-     * only a few ticks per activation (queue send + delay). */
-    xTaskCreate( vTask2, "tau2", 512, NULL, 4, NULL );
+    /* τ2 submitter: EDF task, period=100ms, deadline=5ms, wcet=1ms.
+     * D=5ms ensures tau2's absolute deadline is always earlier than tau1's
+     * (worst case: tau2 arrives at t=200, tau1 deadline=210 → 205 < 210). */
+    xTaskCreateEDF( vTask2, "tau2", 512, NULL, 2,
+                    MS( 100 ), MS( 5 ), MS( 1 ), NULL );
 
-    // xTaskCreate( vLEDTask,       "LED",       256, NULL, 1, NULL );
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
 
     vTaskStartScheduler();

@@ -60,6 +60,7 @@
 #define configUSE_CBS_SERVER                    1
 #define configCBS_QUEUE_LENGTH                  16
 
+
 #define configIDLE_SHOULD_YIELD                 1
 
 /* Synchronization Related */
