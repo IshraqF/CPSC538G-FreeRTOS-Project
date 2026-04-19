@@ -27,6 +27,19 @@ static void vLEDTask( void * pvParams )
     }
 }
 
+void vTaskSwitchedOutHook(void)
+{
+    UBaseType_t gpio = uxTaskGPIOGet();
+    gpio_put(gpio, 0); // Turn off GPIO for the task
+}
+
+// Hook called when a task is switched in (optional)
+void vTaskSwitchedInHook(void)
+{
+    UBaseType_t gpio = uxTaskGPIOGet();
+    gpio_put(gpio, 1); // Turn off GPIO for the task
+}
+
 /* UART drain task — drains both ring buffers and prints via printf.
  * Runs at priority 3, above EDF tasks, so the log never starves.
  */
@@ -65,14 +78,16 @@ static void vTask1( void * pvParams )
 
 int main( void )
 {
+    gpio_init(9);
+    gpio_set_dir(9, GPIO_OUT);
     stdio_init_all();
     printf( "\r\n=== EDF Test 1: Single task, U=0.5 ===\r\n" );
 
     xTaskCreateEDF( vTask1, "T1_Half", 512, NULL, 2,
-                    MS( 200 ), MS( 200 ), MS( 100 ), NULL );
+                    MS( 200 ), MS( 200 ), MS( 100 ), 9, NULL );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+    // xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
 
     vTaskStartScheduler();
     while( 1 ) {}
@@ -442,18 +457,12 @@ static void vTask2( void * pvParams )
 
     TickType_t xLWT = xTaskGetTickCount();   /* ≈ 30 */
 
-    int i;
-    for( i = 0; i < 2; i++ )
+    for( ;; )
     {
         printf( "[tau2] submit at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
         xCBSSubmitJob( xCBSServerHandle, vTask2Job, NULL );
         vTaskDelayEDF( &xLWT );
     }
-
-    /* Both jobs submitted — suspend so the CBS server drains without
-     * accumulating a backlog.  The test is complete once job 2 finishes. */
-    printf( "[tau2] done submitting — suspending\r\n" );
-    vTaskSuspend( NULL );
 }
 
 int main( void )

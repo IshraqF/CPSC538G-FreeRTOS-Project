@@ -505,6 +505,10 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
         int iTaskErrno;
     #endif
 
+    #if ( configUSE_TASK_GPIO == 1 )
+        uint32_t uxGPIO;
+    #endif
+
     #if ( configUSE_EDF_SCHEDULER == 1 )
         TickType_t xTaskPeriod; /**< The period of the task. */
         TickType_t xTaskDeadline; /**< The relative deadline of the task. */
@@ -521,6 +525,7 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
             TickType_t    xCBSPeriod;    /**< Ts: server replenishment period in ticks. */
             UBaseType_t   xCBSPending;   /**< n: jobs in queue + currently executing job. */
             QueueHandle_t xCBSQueue;     /**< Internal queue of CBSJob_t items. */
+            BaseType_t    xCBSExecuting; /**< Whether the server is currently executing a job. */
         #endif /* configUSE_CBS_SERVER */
     #endif /* configUSE_EDF_SCHEDULER */
 } tskTCB;
@@ -2537,6 +2542,18 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
 #endif /* INCLUDE_vTaskDelete */
 /*-----------------------------------------------------------*/
 
+// #if (configUSE_TASK_GPIO == 1)
+//     void vTaskGPIOSet( TaskHandle_t xTask, UBaseType_t uxGPIO ){
+//         TCB_t * pxTCB;
+//         pxTCB = prvGetTCBFromHandle( xTask );
+//         pxTCB->uxGPIO = uxGPIO;
+//     }
+
+//     UBaseType_t uxTaskGPIOGet(void){
+//         return pxCurrentTCB->uxGPIO;
+//     }
+// #endif
+
 #if ( configUSE_EDF_SCHEDULER == 1 )
 
     BaseType_t xTaskCreateEDF( TaskFunction_t pxTaskCode,
@@ -2547,6 +2564,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                                 TickType_t xPeriod,
                                 TickType_t xDeadline,
                                 TickType_t xComputationTime,
+                                // uint32_t uxGPIO,
                                 TaskHandle_t * const pxCreatedTask )
     {
         BaseType_t xReturn;
@@ -2633,6 +2651,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
             xReturn = pdFAIL;
         }
 
+        // vTaskGPIOSet( xHandle, uxGPIO );
         return xReturn;
     }
 
@@ -5175,7 +5194,7 @@ BaseType_t xTaskIncrementTick( void )
         {
             if( ( pxCurrentTCB != NULL ) &&
                 ( pxCurrentTCB->xTaskIsCBS == pdTRUE ) &&
-                ( pxCurrentTCB->xCBSPending > 0U ) )
+                ( pxCurrentTCB->xCBSExecuting == pdTRUE ) )
             {
                 if( pxCurrentTCB->xCBSBudget > 0U )
                 {
@@ -5187,7 +5206,12 @@ BaseType_t xTaskIncrementTick( void )
                     /* Rule 3: budget exhausted — postpone server deadline by Ts
                      * and refill to Qs so the server re-enters the EDF queue
                      * with a later (weaker) deadline. */
-                    ( void ) uxListRemove( &( pxCurrentTCB->xStateListItem ) );
+                    
+                    if( listLIST_ITEM_CONTAINER( &( pxCurrentTCB->xStateListItem ) ) != NULL )
+                    {
+                        ( void ) uxListRemove( &( pxCurrentTCB->xStateListItem ) );
+                    }
+                    
                     pxCurrentTCB->xJobDeadline += pxCurrentTCB->xCBSPeriod;
                     pxCurrentTCB->xCBSBudget    = pxCurrentTCB->xCBSMaxBudget;
                     prvCBSAddToReadyList( pxCurrentTCB );
@@ -6842,32 +6866,148 @@ void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
 /* CBS (Constant Bandwidth Server) Implementation */
 #if ( configUSE_CBS_SERVER == 1 )
 
+// static void prvCBSServerTask( void * pvParameters )
+// {
+//     TCB_t    * pxTCB = ( TCB_t * ) xTaskGetCurrentTaskHandle();
+//     CBSJob_t   xJob;
+
+//     ( void ) pvParameters;
+
+//     for( ; ; )
+//     {
+//         /* Block until a job arrives; xCBSPending == 0 while blocked here. */
+//         xQueueReceive( ( QueueHandle_t ) pxTCB->xCBSQueue, &xJob, portMAX_DELAY );
+
+//         /* Execute the aperiodic job. */
+//         xJob.pxFunction( xJob.pvParameters );
+
+//         /* Job complete: decrement the pending count under a critical section
+//          * so it is coherent with the xCBSSubmitJob() increment. */
+//         taskENTER_CRITICAL();
+//         {
+//             pxTCB->xCBSPending--;
+//         }
+//         taskEXIT_CRITICAL();
+//         /* If more jobs are queued the next xQueueReceive returns immediately
+//          * and the server continues with the same ds_k. */
+//     }
+// }
+
 static void prvCBSServerTask( void * pvParameters )
 {
-    TCB_t    * pxTCB = ( TCB_t * ) xTaskGetCurrentTaskHandle();
-    CBSJob_t   xJob;
+    TCB_t * pxTCB = ( TCB_t * ) pxCurrentTCB;
+    CBSJob_t xJob;
 
     ( void ) pvParameters;
 
-    for( ; ; )
+    for( ;; )
     {
-        /* Block until a job arrives; xCBSPending == 0 while blocked here. */
-        xQueueReceive( ( QueueHandle_t ) pxTCB->xCBSQueue, &xJob, portMAX_DELAY );
+        /* Sleep until a job is available. */
+        ( void ) xQueueReceive( ( QueueHandle_t ) pxTCB->xCBSQueue,
+                                &xJob,
+                                portMAX_DELAY );
 
-        /* Execute the aperiodic job. */
-        xJob.pxFunction( xJob.pvParameters );
-
-        /* Job complete: decrement the pending count under a critical section
-         * so it is coherent with the xCBSSubmitJob() increment. */
+        /* From this point onward, budget should be charged. */
         taskENTER_CRITICAL();
         {
+            pxTCB->xCBSExecuting = pdTRUE;
+        }
+        taskEXIT_CRITICAL();
+
+        /* Execute the submitted job under the server budget. */
+        xJob.pxFunction( xJob.pvParameters );
+
+        /* Job finished. Stop charging budget. */
+        taskENTER_CRITICAL();
+        {
+            pxTCB->xCBSExecuting = pdFALSE;
+
+            configASSERT( pxTCB->xCBSPending > 0U );
             pxTCB->xCBSPending--;
         }
         taskEXIT_CRITICAL();
-        /* If more jobs are queued the next xQueueReceive returns immediately
-         * and the server continues with the same ds_k. */
     }
 }
+
+// BaseType_t xTaskCreateCBS( const char * const   pcName,
+//                             const uint32_t       uxStackDepth,
+//                             UBaseType_t          uxPriority,
+//                             TickType_t           xQs,
+//                             TickType_t           xTs,
+//                             TaskHandle_t * const pxCreatedTask )
+// {
+//     BaseType_t   xReturn = pdFAIL;
+//     TaskHandle_t xHandle = NULL;
+//     QueueHandle_t xQueue;
+
+//     /* Create the internal job queue. */
+//     xQueue = xQueueCreate( ( UBaseType_t ) configCBS_QUEUE_LENGTH,
+//                            ( UBaseType_t ) sizeof( CBSJob_t ) );
+
+//     if( xQueue == NULL )
+//     {
+//         return pdFAIL;
+//     }
+
+//     xReturn = xTaskCreate( prvCBSServerTask,
+//                            pcName,
+//                            ( configSTACK_DEPTH_TYPE ) uxStackDepth,
+//                            NULL,
+//                            uxPriority,
+//                            &xHandle );
+
+//     if( xReturn == pdPASS )
+//     {
+//         TCB_t * pxNewTCB = ( TCB_t * ) xHandle;
+
+//         taskENTER_CRITICAL();
+//         {
+//             /* Mark this task as EDF-scheduled and as a CBS server. */
+//             pxNewTCB->xTaskIsEDF    = pdTRUE;
+//             pxNewTCB->xTaskIsCBS    = pdTRUE;
+
+//             /* Initialise CBS state. */
+//             pxNewTCB->xCBSMaxBudget = xQs;
+//             pxNewTCB->xCBSBudget    = 0U;
+//             pxNewTCB->xCBSPeriod    = xTs;
+//             pxNewTCB->xCBSPending   = 0U;
+//             pxNewTCB->xCBSQueue     = ( void * ) xQueue;
+
+//             /* Server starts idle: ds_{-1} = 0, deadline not yet in EDF list.
+//              * The task is already blocked on its empty queue (not in any
+//              * ready list), so we do NOT call prvEDFAddToReadyList here.
+//              * xJobDeadline will be set by the first xCBSSubmitJob() call. */
+//             pxNewTCB->xJobDeadline   = ( TickType_t ) 0U;
+//             pxNewTCB->xJobReleaseTime = ( TickType_t ) 0U;
+
+//             /* Zero out unused periodic-EDF fields to avoid stale values. */
+//             pxNewTCB->xTaskPeriod          = xTs;
+//             pxNewTCB->xTaskDeadline        = xTs;
+//             pxNewTCB->xTaskComputationTime = xQs;
+//         }
+//         taskEXIT_CRITICAL();
+
+//         #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+//         {
+//             printf( "[CBS] CREATE | server=%-16s | Qs=%lu Ts=%lu\r\n",
+//                     pcName,
+//                     ( unsigned long ) xQs,
+//                     ( unsigned long ) xTs );
+//         }
+//         #endif /* configEDF_ENABLE_DEBUG_LOG */
+
+//         if( pxCreatedTask != NULL )
+//         {
+//             *pxCreatedTask = xHandle;
+//         }
+//     }
+//     else
+//     {
+//         vQueueDelete( xQueue );
+//     }
+
+//     return xReturn;
+// }
 
 BaseType_t xTaskCreateCBS( const char * const   pcName,
                             const uint32_t       uxStackDepth,
@@ -6876,9 +7016,10 @@ BaseType_t xTaskCreateCBS( const char * const   pcName,
                             TickType_t           xTs,
                             TaskHandle_t * const pxCreatedTask )
 {
-    BaseType_t   xReturn = pdFAIL;
+    BaseType_t   xReturn;
     TaskHandle_t xHandle = NULL;
     QueueHandle_t xQueue;
+    TCB_t * pxNewTCB;
 
     /* Create the internal job queue. */
     xQueue = xQueueCreate( ( UBaseType_t ) configCBS_QUEUE_LENGTH,
@@ -6889,43 +7030,46 @@ BaseType_t xTaskCreateCBS( const char * const   pcName,
         return pdFAIL;
     }
 
-    xReturn = xTaskCreate( prvCBSServerTask,
-                           pcName,
-                           ( configSTACK_DEPTH_TYPE ) uxStackDepth,
-                           NULL,
-                           uxPriority,
-                           &xHandle );
+    traceENTER_xTaskCreate(prvCBSServerTask, pcName, (configSTACK_DEPTH_TYPE) uxStackDepth, NULL, uxPriority,&xHandle);
 
-    if( xReturn == pdPASS )
+    pxNewTCB = prvCreateTask(prvCBSServerTask, pcName, (configSTACK_DEPTH_TYPE) uxStackDepth, NULL, uxPriority,&xHandle);
+
+    if( pxNewTCB != NULL )
     {
-        TCB_t * pxNewTCB = ( TCB_t * ) xHandle;
-
-        taskENTER_CRITICAL();
+        #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
         {
-            /* Mark this task as EDF-scheduled and as a CBS server. */
-            pxNewTCB->xTaskIsEDF    = pdTRUE;
-            pxNewTCB->xTaskIsCBS    = pdTRUE;
-
-            /* Initialise CBS state. */
-            pxNewTCB->xCBSMaxBudget = xQs;
-            pxNewTCB->xCBSBudget    = 0U;
-            pxNewTCB->xCBSPeriod    = xTs;
-            pxNewTCB->xCBSPending   = 0U;
-            pxNewTCB->xCBSQueue     = ( void * ) xQueue;
-
-            /* Server starts idle: ds_{-1} = 0, deadline not yet in EDF list.
-             * The task is already blocked on its empty queue (not in any
-             * ready list), so we do NOT call prvEDFAddToReadyList here.
-             * xJobDeadline will be set by the first xCBSSubmitJob() call. */
-            pxNewTCB->xJobDeadline   = ( TickType_t ) 0U;
-            pxNewTCB->xJobReleaseTime = ( TickType_t ) 0U;
-
-            /* Zero out unused periodic-EDF fields to avoid stale values. */
-            pxNewTCB->xTaskPeriod          = xTs;
-            pxNewTCB->xTaskDeadline        = xTs;
-            pxNewTCB->xTaskComputationTime = xQs;
+            /* Set the task's affinity before scheduling it. */
+            pxNewTCB->uxCoreAffinityMask = configTASK_DEFAULT_CORE_AFFINITY;
         }
-        taskEXIT_CRITICAL();
+        #endif
+
+        TCB_t * pxCBSTCB = ( TCB_t * ) xHandle;
+        /* Mark this task as EDF-scheduled and as a CBS server. */
+        pxCBSTCB->xTaskIsEDF    = pdTRUE;
+        pxCBSTCB->xTaskIsCBS    = pdTRUE;
+
+        /* Initialise CBS state. */
+        pxCBSTCB->xCBSMaxBudget = xQs;
+        pxCBSTCB->xCBSBudget    = 0U;
+        pxCBSTCB->xCBSPeriod    = xTs;
+        pxCBSTCB->xCBSPending   = 0U;
+        pxCBSTCB->xCBSQueue     = ( void * ) xQueue;
+
+        /* Server starts idle: ds_{-1} = 0, deadline not yet in EDF list.
+            * The task is already blocked on its empty queue (not in any
+            * ready list), so we do NOT call prvEDFAddToReadyList here.
+            * xJobDeadline will be set by the first xCBSSubmitJob() call. */
+        pxCBSTCB->xJobDeadline   = ( TickType_t ) 0U;
+        pxCBSTCB->xJobReleaseTime = ( TickType_t ) 0U;
+
+        /* Zero out unused periodic-EDF fields to avoid stale values. */
+        pxCBSTCB->xTaskPeriod          = xTs;
+        pxCBSTCB->xTaskDeadline        = xTs;
+        pxCBSTCB->xTaskComputationTime = xQs;
+        pxCBSTCB->xCBSExecuting       = pdFALSE;
+
+        // prvAddNewTaskToReadyList( pxCBSTCB );
+        xReturn = pdPASS;
 
         #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
         {
@@ -6943,15 +7087,120 @@ BaseType_t xTaskCreateCBS( const char * const   pcName,
     }
     else
     {
+        xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
         vQueueDelete( xQueue );
     }
+
+    traceRETURN_xTaskCreate( xReturn );
 
     return xReturn;
 }
 
+// BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
+//                            void         ( *pxFunction )( void * ),
+//                            void         * pvParameters )
+// {
+//     TCB_t      * pxTCB = ( TCB_t * ) xServer;
+//     CBSJob_t     xJob;
+//     TickType_t   rj;
+//     TickType_t   aj;
+//     BaseType_t   xWasIdle;
+//     // BaseType_t   xNeedYield = pdFALSE;
+
+//     xJob.pxFunction  = pxFunction;
+//     xJob.pvParameters = pvParameters;
+
+//     taskENTER_CRITICAL();
+//     {
+//         pxTCB->xCBSPending++;
+//         xWasIdle = ( pxTCB->xCBSPending == 1U ) ? pdTRUE : pdFALSE;
+//         rj = xTaskGetTickCount();
+
+//         if( xWasIdle == pdTRUE )
+//         {
+//             /* First job after an idle period: apply Rule 1 or Rule 2.
+//              *
+//              * Rule 1 condition: rj + (cs/Qs)*Ts >= ds_k
+//              * Rewritten without division (avoids floating point):
+//              *   rj * Qs + cs * Ts >= ds_k * Qs
+//              */
+//             if( ( rj * pxTCB->xCBSMaxBudget +
+//                   pxTCB->xCBSBudget * pxTCB->xCBSPeriod )
+//                 >= ( pxTCB->xJobDeadline * pxTCB->xCBSMaxBudget ) )
+//             {
+//                 /* Rule 1: generate a fresh deadline and refill budget. */
+//                 aj = rj;
+//                 pxTCB->xJobDeadline = aj + pxTCB->xCBSPeriod;
+//                 pxTCB->xCBSBudget   = pxTCB->xCBSMaxBudget;
+
+//                 #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+//                 {
+//                     printf( "[CBS] ARRIVE Rule1 | server=%-16s | tick=%lu | ds_k=%lu | cs=%lu\r\n",
+//                             pxTCB->pcTaskName,
+//                             ( unsigned long ) aj,
+//                             ( unsigned long ) pxTCB->xJobDeadline,
+//                             ( unsigned long ) pxTCB->xCBSBudget );
+//                 }
+//                 #endif
+//             }
+//             else
+//             {
+//                 /* Rule 2: reuse existing ds_k and cs — no change needed. */
+//                 aj = rj;
+//                 pxTCB->xJobDeadline = pxTCB->xJobDeadline;
+
+//                 #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+//                 {
+//                     printf( "[CBS] ARRIVE Rule2 | server=%-16s | tick=%lu | ds_k=%lu | cs=%lu\r\n",
+//                             pxTCB->pcTaskName,
+//                             ( unsigned long ) aj,
+//                             ( unsigned long ) pxTCB->xJobDeadline,
+//                             ( unsigned long ) pxTCB->xCBSBudget );
+//                 }
+//                 #endif
+//             }
+
+//             /* EDF startup fix: xTaskCreate places the CBS server task in
+//              * pxReadyTasksLists[priority] before xTaskIsCBS is set, so the
+//              * server never appears in xEDFReadyTasksList.  The server only
+//              * migrates to the correct list the first time it runs and calls
+//              * xQueueReceive — but that can't happen while EDF tasks are ready,
+//              * because the EDF path always wins in taskSELECT_HIGHEST_PRIORITY_TASK.
+//              *
+//              * Detect this condition by checking xEventListItem: if it is not in
+//              * any list the server has never blocked on its queue, so it is still
+//              * sitting in the fixed-priority ready list.  Move it directly into
+//              * xEDFReadyTasksList now so subsequent scheduling is EDF-correct.
+//              *
+//              * After the first job completes the server blocks on xQueueReceive
+//              * (portMAX_DELAY), which places xEventListItem in the queue's event
+//              * list.  From that point xQueueSend → xTaskRemoveFromEventList →
+//              * prvCBSAddToReadyList handles every wakeup correctly. */
+//             // if( listLIST_ITEM_CONTAINER( &( pxTCB->xEventListItem ) ) == NULL )
+//             // {
+//             //     ( void ) uxListRemove( &( pxTCB->xStateListItem ) );
+//             //     prvCBSAddToReadyList( pxTCB );
+//             //     xNeedYield = pdTRUE;
+//             // }
+//         }
+//     }
+//     taskEXIT_CRITICAL();
+
+//     ( void ) xQueueSend( ( QueueHandle_t ) pxTCB->xCBSQueue, &xJob, ( TickType_t ) 0 );
+
+//     /* If we manually inserted CBS into the EDF ready list (startup case),
+//      * yield so the scheduler can preempt if CBS now has the earliest deadline. */
+//     // if( xNeedYield == pdTRUE )
+//     // {
+//     //     portYIELD_WITHIN_API();
+//     // }
+
+//     return pdPASS;
+// }
+
 BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
-                           void         ( *pxFunction )( void * ),
-                           void         * pvParameters )
+                          void         ( *pxFunction )( void * ),
+                          void         * pvParameters )
 {
     TCB_t      * pxTCB = ( TCB_t * ) xServer;
     CBSJob_t     xJob;
@@ -6959,29 +7208,60 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
     TickType_t   aj;
     BaseType_t   xWasIdle;
     BaseType_t   xNeedYield = pdFALSE;
+    BaseType_t   xSendResult;
 
-    xJob.pxFunction  = pxFunction;
+    /* Basic validation. */
+    if( ( pxTCB == NULL ) || ( pxFunction == NULL ) )
+    {
+        return pdFAIL;
+    }
+
+    #if ( configUSE_CBS_SERVER == 1 )
+    if( pxTCB->xTaskIsCBS != pdTRUE )
+    {
+        return pdFAIL;
+    }
+    #endif
+
+    xJob.pxFunction   = pxFunction;
     xJob.pvParameters = pvParameters;
+
+    /* First, try to enqueue the job.
+     * A CBS job is only considered "accepted" if this succeeds. */
+    xSendResult = xQueueSend( ( QueueHandle_t ) pxTCB->xCBSQueue,
+                              &xJob,
+                              ( TickType_t ) 0 );
+
+    if( xSendResult != pdPASS )
+    {
+        return pdFAIL;
+    }
 
     taskENTER_CRITICAL();
     {
+        /* Detect idle -> active transition using the OLD pending count. */
+        xWasIdle = ( pxTCB->xCBSPending == 0U ) ? pdTRUE : pdFALSE;
+
+        /* Now the job is definitely accepted, so pending can increase. */
         pxTCB->xCBSPending++;
-        xWasIdle = ( pxTCB->xCBSPending == 1U ) ? pdTRUE : pdFALSE;
-        rj = xTaskGetTickCount();
 
         if( xWasIdle == pdTRUE )
         {
-            /* First job after an idle period: apply Rule 1 or Rule 2.
+            rj = xTaskGetTickCount();
+
+            /* First accepted job after an idle period: apply Rule 1 or Rule 2.
              *
-             * Rule 1 condition: rj + (cs/Qs)*Ts >= ds_k
-             * Rewritten without division (avoids floating point):
+             * Rule 1 condition:
+             *   rj + (cs/Qs)*Ts >= ds_k
+             *
+             * Rewritten without division:
              *   rj * Qs + cs * Ts >= ds_k * Qs
              */
             if( ( rj * pxTCB->xCBSMaxBudget +
-                  pxTCB->xCBSBudget * pxTCB->xCBSPeriod )
-                >= ( pxTCB->xJobDeadline * pxTCB->xCBSMaxBudget ) )
+                  pxTCB->xCBSBudget * pxTCB->xCBSPeriod ) >=
+                ( pxTCB->xJobDeadline * pxTCB->xCBSMaxBudget ) )
             {
-                /* Rule 1: generate a fresh deadline and refill budget. */
+                /* Rule 1: fresh deadline, full refill. */
                 aj = rj;
                 pxTCB->xJobDeadline = aj + pxTCB->xCBSPeriod;
                 pxTCB->xCBSBudget   = pxTCB->xCBSMaxBudget;
@@ -6998,9 +7278,8 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
             }
             else
             {
-                /* Rule 2: reuse existing ds_k and cs — no change needed. */
+                /* Rule 2: reuse existing ds_k and cs. */
                 aj = rj;
-                pxTCB->xJobDeadline = pxTCB->xJobDeadline;
 
                 #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
                 {
@@ -7013,36 +7292,33 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
                 #endif
             }
 
-            /* EDF startup fix: xTaskCreate places the CBS server task in
-             * pxReadyTasksLists[priority] before xTaskIsCBS is set, so the
-             * server never appears in xEDFReadyTasksList.  The server only
-             * migrates to the correct list the first time it runs and calls
-             * xQueueReceive — but that can't happen while EDF tasks are ready,
-             * because the EDF path always wins in taskSELECT_HIGHEST_PRIORITY_TASK.
+            /* IMPORTANT:
+             * The server was created dormant (not inserted into any ready list).
+             * So on the first accepted job, activate the SERVER by inserting
+             * its task into the EDF ready list.
              *
-             * Detect this condition by checking xEventListItem: if it is not in
-             * any list the server has never blocked on its queue, so it is still
-             * sitting in the fixed-priority ready list.  Move it directly into
-             * xEDFReadyTasksList now so subsequent scheduling is EDF-correct.
+             * The job itself is NOT inserted into EDF. The server task is.
+             */
+            configASSERT( listLIST_ITEM_CONTAINER( &( pxTCB->xStateListItem ) ) == NULL );
+            prvCBSAddToReadyList( pxTCB );
+
+            /* Since EDF tasks dominate fixed-priority tasks in your selector,
+             * and this server just became runnable, request a reschedule. */
+            xNeedYield = pdTRUE;
+        }
+        else
+        {
+            /* Server was already active or already blocked on its queue.
              *
-             * After the first job completes the server blocks on xQueueReceive
-             * (portMAX_DELAY), which places xEventListItem in the queue's event
-             * list.  From that point xQueueSend → xTaskRemoveFromEventList →
-             * prvCBSAddToReadyList handles every wakeup correctly. */
-            if( listLIST_ITEM_CONTAINER( &( pxTCB->xEventListItem ) ) == NULL )
-            {
-                ( void ) uxListRemove( &( pxTCB->xStateListItem ) );
-                prvCBSAddToReadyList( pxTCB );
-                xNeedYield = pdTRUE;
-            }
+             * In that case, do NOT manually insert it again here.
+             * If it is blocked on xQueueReceive(), the queue send above will
+             * wake it via the normal queue unblock path, and FreeRTOS will
+             * place it back into the ready structure correctly.
+             */
         }
     }
     taskEXIT_CRITICAL();
 
-    ( void ) xQueueSend( ( QueueHandle_t ) pxTCB->xCBSQueue, &xJob, ( TickType_t ) 0 );
-
-    /* If we manually inserted CBS into the EDF ready list (startup case),
-     * yield so the scheduler can preempt if CBS now has the earliest deadline. */
     if( xNeedYield == pdTRUE )
     {
         portYIELD_WITHIN_API();

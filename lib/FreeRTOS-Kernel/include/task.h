@@ -403,6 +403,7 @@ typedef enum
                                TickType_t xPeriod,
                                TickType_t xDeadline,
                                TickType_t xWCET,
+                            //    uint32_t uxGPIO,
                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 
     /* Drain the deadline-miss ring buffer and print events via printf/UART. */
@@ -1243,6 +1244,7 @@ UBaseType_t uxTaskBasePriorityGetFromISR( const TaskHandle_t xTask ) PRIVILEGED_
  */
 void vTaskPrioritySet( TaskHandle_t xTask,
                        UBaseType_t uxNewPriority ) PRIVILEGED_FUNCTION;
+UBaseType_t uxTaskGPIOGet( void ) PRIVILEGED_FUNCTION;
 
 /**
  * task. h

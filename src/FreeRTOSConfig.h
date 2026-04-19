@@ -55,6 +55,7 @@
 #define configEDF_MAX_TASKS                     16
 #define configEDF_MAX_SCHEDULING_POINTS         1000
 #define configEDF_ENABLE_DEBUG_LOG              1
+#define configUSE_TASK_GPIO                     1
 
 /* CBS (Constant Bandwidth Server) Related */
 #define configUSE_CBS_SERVER                    1
@@ -148,6 +149,12 @@ to exclude the API function. */
 #define INCLUDE_xTaskResumeFromISR              1
 #define INCLUDE_xQueueGetMutexHolder            1
 
-/* A header file that defines trace macro can be included here. */
+// /* Forward declarations for trace hook callbacks defined in main.c. */
+// void vTaskSwitchedOutHook( void );
+// void vTaskSwitchedInHook( void );
+
+// /* A header file that defines trace macro can be included here. */
+// #define traceTASK_SWITCHED_OUT() vTaskSwitchedOutHook()
+// #define traceTASK_SWITCHED_IN()  vTaskSwitchedInHook()
 
 #endif /* FREERTOS_CONFIG_H */
