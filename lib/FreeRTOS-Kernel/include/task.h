@@ -409,7 +409,7 @@ typedef enum
     /* Drain the deadline-miss ring buffer and print events via printf/UART. */
     void vEDFDrainMissLog( void ) PRIVILEGED_FUNCTION;
 
-    /** Drain the context-switch ring buffer and print events via printf/UART. */
+    /* drain context-switch ring buffer & print on UART */
     void vEDFDrainSwitchLog( void ) PRIVILEGED_FUNCTION;
 
     /* Print a table of admitted EDF task parameters via printf/UART. */

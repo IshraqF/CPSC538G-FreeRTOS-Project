@@ -519,15 +519,15 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     #endif
 
     #if ( configUSE_EDF_SCHEDULER == 1 )
-        TickType_t xTaskPeriod; /**< The period of the task. */
-        TickType_t xTaskDeadline; /**< The relative deadline of the task. */
-        TickType_t xTaskComputationTime; /**< The computation time of the task. */
-        BaseType_t xTaskIsEDF; /**< Whether the task is scheduled using EDF or not. */
+        TickType_t xTaskPeriod;
+        TickType_t xTaskDeadline;          // relative deadline
+        TickType_t xTaskComputationTime;   // WCET
+        BaseType_t xTaskIsEDF;             // TRUE if task uses EDF scheduling
 
-        TickType_t xJobDeadline; /**< The absolute deadline of the current job. */
-        TickType_t xJobReleaseTime; /**< The release time of the current job. */
+        TickType_t xJobDeadline;           // absolute deadline of current job
+        TickType_t xJobReleaseTime;
         #if ( configUSE_SRP == 1 )
-            TickType_t xPreemptionLevel; /**< basically xTaskDeadline, shorter deadline is greater preemption level */
+            TickType_t xPreemptionLevel;   //shorter deadline = higher preemption level
         #endif
     #endif
 } tskTCB;
@@ -561,15 +561,15 @@ PRIVILEGED_DATA static List_t * volatile pxOverflowDelayedTaskList;      /**< Po
 PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Tasks that have been readied while the scheduler was suspended.  They will be moved to the ready list when the scheduler is resumed. */
 
 #if ( configUSE_EDF_SCHEDULER == 1 )
-    PRIVILEGED_DATA static List_t xEDFReadyTasksList; /**< EDF ready tasks sorted ascending by xJobDeadline. */
+    PRIVILEGED_DATA static List_t xEDFReadyTasksList; // EDF ready tasks, sorted earliest deadline first
 
     typedef struct
     {
         TickType_t xPeriod;
-        TickType_t xDeadline;          /**< Relative deadline in ticks. */
-        TickType_t xComputationTime;   /**< WCET in ticks. */
-        TickType_t xMaxBlockingTime;   /**< Worst case SRP blocking time in ticks */
-        BaseType_t xValid;             /**< pdTRUE when slot is occupied. */
+        TickType_t xDeadline;          // relative deadline in ticks
+        TickType_t xComputationTime;   // WCET in ticks
+        TickType_t xMaxBlockingTime;   // worst-case SRP blocking time in ticks
+        BaseType_t xValid;             // TRUE if this slot is in use
     } EDFTaskParams_t;
 
     PRIVILEGED_DATA static EDFTaskParams_t xEDFAdmittedTasks[ configEDF_MAX_TASKS ];

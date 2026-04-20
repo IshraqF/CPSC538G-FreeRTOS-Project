@@ -135,7 +135,7 @@ typedef struct QueueDefinition /* The old naming convention is used to prevent b
     #endif
 
     #if ( configUSE_SRP == 1 )
-        TickType_t xResourceCeiling; /**< Min deadline out of tasks using this resource, 0 means no SRP */
+        TickType_t xResourceCeiling; // min deadline among tasks using this resource, 0 = no SRP
     #endif
 } xQUEUE;
 
