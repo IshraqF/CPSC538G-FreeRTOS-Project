@@ -7292,15 +7292,10 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
                 #endif
             }
 
-            /* IMPORTANT:
-             * The server was created dormant (not inserted into any ready list).
-             * So on the first accepted job, activate the SERVER by inserting
-             * its task into the EDF ready list.
-             *
-             * The job itself is NOT inserted into EDF. The server task is.
-             */
-            configASSERT( listLIST_ITEM_CONTAINER( &( pxTCB->xStateListItem ) ) == NULL );
-            prvCBSAddToReadyList( pxTCB );
+            if( listLIST_ITEM_CONTAINER( &( pxTCB->xStateListItem ) ) == NULL )
+            {
+                prvCBSAddToReadyList( pxTCB );
+            }
 
             /* Since EDF tasks dominate fixed-priority tasks in your selector,
              * and this server just became runnable, request a reschedule. */
