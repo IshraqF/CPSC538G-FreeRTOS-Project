@@ -7,7 +7,7 @@
 
 /* Select which test to run (1–7). */
 #ifndef TEST_CASE
-    #define TEST_CASE 17
+    #define TEST_CASE 28
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -1794,7 +1794,7 @@ int main( void )
  *   appears on the same core across all its jobs.
  *   Task A: T=100, D=100, C=40  → core 0
  *   Task B: T=150, D=150, C=40  → core 0
- *   Task C: T=200, D=200, C=60  → core 1 (core 0 would reach 107%)
+ *   Task C: T=200, D=200, C=70  → core 1
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 26 )
 
@@ -1830,8 +1830,8 @@ int main( void )
                     MS( 100 ), MS( 100 ), MS( 40 ), 0, NULL );
     xTaskCreateEDF( vTask26Body, "P26_B", 512, (void *) MS( 40 ), 2,
                     MS( 150 ), MS( 150 ), MS( 40 ), 0, NULL );
-    xTaskCreateEDF( vTask26Body, "P26_C", 512, (void *) MS( 60 ), 2,
-                    MS( 200 ), MS( 200 ), MS( 60 ), 0, NULL );
+    xTaskCreateEDF( vTask26Body, "P26_C", 512, (void *) MS( 70 ), 2,
+                    MS( 200 ), MS( 200 ), MS( 70 ), 0, NULL );
 
     xTaskCreate( vTask26Drain, "Drain", 512, NULL, 3, NULL );
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
@@ -1892,3 +1892,94 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 27 */
+
+/* -----------------------------------------------------------------------
+ * TEST 28 — Partitioned EDF: dynamic task admission while system is running
+ *   A spawner creates 5 EDF tasks 500ms apart while the scheduler is live.
+ *   All tasks use T=200ms, D=200ms.  First-fit core assignment:
+ *
+ *   DYN_1: C=120ms  U=0.60  C0: 0.60        → C0  ADMITTED
+ *   DYN_2: C=100ms  U=0.50  C0: 1.10 > 1.0  → C1: 0.50  ADMITTED
+ *   DYN_3: C= 60ms  U=0.30  C0: 0.90        → C0  ADMITTED
+ *   DYN_4: C= 60ms  U=0.30  C0: 1.20 > 1.0  → C1: 0.80  ADMITTED
+ *   DYN_5: C= 60ms  U=0.30  C0: 1.20 > 1.0  → C1: 1.10 > 1.0  REJECTED
+ *
+ *   Final admitted count = 4  (2 on C0, 2 on C1)
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 28 )
+
+static void vTask28Worker( void * pvParams )
+{
+    TickType_t xWCET = ( TickType_t ) pvParams;
+    TickType_t xLWT  = xTaskGetTickCount();
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xWCET ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask28Spawner( void * pvParams )
+{
+    ( void ) pvParams;
+
+    static const struct
+    {
+        const char * pcName;
+        TickType_t   xWCET;
+        const char * pcExpected;
+    } xJobs[] =
+    {
+        { "DYN_1", MS( 120 ), "ADMITTED → C0" },
+        { "DYN_2", MS( 100 ), "ADMITTED → C1" },
+        { "DYN_3", MS(  60 ), "ADMITTED → C0" },
+        { "DYN_4", MS(  60 ), "ADMITTED → C1" },
+        { "DYN_5", MS(  60 ), "REJECTED"       },
+    };
+
+    UBaseType_t ux;
+
+    for( ux = 0; ux < ( UBaseType_t ) ( sizeof( xJobs ) / sizeof( xJobs[ 0 ] ) ); ux++ )
+    {
+        vTaskDelay( MS( 500 ) );
+
+        BaseType_t xRet = xTaskCreateEDF( vTask28Worker,
+                                          xJobs[ ux ].pcName,
+                                          512,
+                                          ( void * ) xJobs[ ux ].xWCET,
+                                          2,
+                                          MS( 200 ), MS( 200 ), xJobs[ ux ].xWCET,
+                                          0, NULL );
+
+        printf( "t=%lu  %-6s: %-9s  (expected: %s)\r\n",
+                ( unsigned long ) xTaskGetTickCount(),
+                xJobs[ ux ].pcName,
+                xRet == pdPASS ? "ADMITTED" : "REJECTED",
+                xJobs[ ux ].pcExpected );
+    }
+
+    printf( "\r\nSpawner done — admitted count = %lu (expected 4)\r\n",
+            ( unsigned long ) uxEDFGetAdmittedCount() );
+    vEDFPrintStats();
+
+    vTaskDelete( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 28: dynamic admission while running ===\r\n" );
+    printf( "Spawner creates 5 EDF tasks 500ms apart (T=D=200ms)\r\n" );
+    printf( "Expected: DYN_1→C0, DYN_2→C1, DYN_3→C0, DYN_4→C1, DYN_5 rejected\r\n\r\n" );
+
+    xTaskCreate( vTask28Spawner, "Spawner", 512, NULL, 3, NULL );
+    xTaskCreate( vLEDTask,       "LED",     256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 28 */

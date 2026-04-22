@@ -4,7 +4,7 @@
         {
             "name": "Pico Debug (Cortex-Debug)",
             "cwd": "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
-            "executable": "${command:raspberry-pi-pico.launchTargetPath}",
+            "executable": "${workspaceFolder}/build/src/CPSC538G-FreeRTOS-Project.elf",
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "openocd",
@@ -21,16 +21,14 @@
             // Also works fine for flash binaries
             "overrideLaunchCommands": [
                 "monitor reset init",
-                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
+                "load \"${workspaceFolder}/build/src/CPSC538G-FreeRTOS-Project.elf\""
             ],
-            "openOCDLaunchCommands": [
-                "adapter speed 5000"
-            ]
+            "openOCDLaunchCommands": ["adapter speed 5000"]
         },
         {
             "name": "Pico Debug (Cortex-Debug with external OpenOCD)",
             "cwd": "${workspaceRoot}",
-            "executable": "${command:raspberry-pi-pico.launchTargetPath}",
+            "executable": "${workspaceFolder}/build/src/CPSC538G-FreeRTOS-Project.elf",
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "external",
@@ -43,8 +41,8 @@
             // Also works fine for flash binaries
             "overrideLaunchCommands": [
                 "monitor reset init",
-                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
+                "load \"${workspaceFolder}/build/src/CPSC538G-FreeRTOS-Project.elf\""
             ]
-        },
+        }
     ]
 }
