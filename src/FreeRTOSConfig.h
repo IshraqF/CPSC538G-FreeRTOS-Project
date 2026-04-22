@@ -61,7 +61,7 @@
 #define configSRP_MAX_CEILING_DEPTH             8
 
 /* Multicore support, these only matter if configNUMBER_OF_CORES > 1 */
-#define configGLOBAL_EDF_ENABLE                 1
+#define configGLOBAL_EDF_ENABLE                 0
 #define configPARTITIONED_EDF_ENABLE            !( configGLOBAL_EDF_ENABLE )
 
 #define configIDLE_SHOULD_YIELD                 1

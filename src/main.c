@@ -1646,3 +1646,249 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 22 */
+
+/* -----------------------------------------------------------------------
+ * TEST 23 — Partitioned EDF: 2 tasks both fit on core 0
+ *   Task A: T=200, D=200, C=80   U=0.4
+ *   Task B: T=200, D=200, C=80   U=0.4
+ *   Total U per core: both fit on core 0 (U=0.8 <= 1.0).
+ *   Both tasks should be pinned to core 0; core 1 runs the idle task only.
+ *   Verify: switch log shows both tasks always on C0.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 23 )
+
+static void vTask23Body( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 80 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 23: 2 tasks both fit on core 0 ===\r\n" );
+    printf( "Expected: both tasks admitted, both pinned to C0\r\n\r\n" );
+
+    BaseType_t xA = xTaskCreateEDF( vTask23Body, "P23_A", 512, NULL, 2,
+                                    MS( 200 ), MS( 200 ), MS( 80 ), 0, NULL );
+    BaseType_t xB = xTaskCreateEDF( vTask23Body, "P23_B", 512, NULL, 2,
+                                    MS( 200 ), MS( 200 ), MS( 80 ), 0, NULL );
+
+    printf( "Task A: %s\r\n", xA == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task B: %s\r\n", xB == pdPASS ? "ADMITTED" : "REJECTED" );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 23 */
+
+/* -----------------------------------------------------------------------
+ * TEST 24 — Partitioned EDF: first-fit overflow to core 1
+ *   Task A: T=100, D=100, C=60   U=0.6  → core 0 (60% used)
+ *   Task B: T=100, D=100, C=30   U=0.3  → core 0 (90% used)
+ *   Task C: T=100, D=100, C=20   U=0.2  → core 0 full (would reach 110%), first-fit → core 1
+ *   Verify: A and B on C0, C on C1.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 24 )
+
+static void vTask24Body( void * pvParams )
+{
+    TickType_t xC = ( TickType_t ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xC ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 24: first-fit overflow to core 1 ===\r\n" );
+    printf( "Expected: A,B → C0; C → C1\r\n\r\n" );
+
+    BaseType_t xA = xTaskCreateEDF( vTask24Body, "P24_A", 512, (void *) MS( 60 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 60 ), 0, NULL );
+    BaseType_t xB = xTaskCreateEDF( vTask24Body, "P24_B", 512, (void *) MS( 30 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 30 ), 0, NULL );
+    BaseType_t xC = xTaskCreateEDF( vTask24Body, "P24_C", 512, (void *) MS( 20 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 20 ), 0, NULL );
+
+    printf( "Task A: %s\r\n", xA == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task B: %s\r\n", xB == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task C: %s\r\n", xC == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Expected: A=ADMITTED, B=ADMITTED, C=ADMITTED\r\n" );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 24 */
+
+/* -----------------------------------------------------------------------
+ * TEST 25 — Partitioned EDF: per-core rejection (no core fits)
+ *   Task A: T=100, D=100, C=90   U=0.9  → core 0
+ *   Task B: T=100, D=100, C=90   U=0.9  → core 1
+ *   Task C: T=100, D=100, C=20   U=0.2  → rejected (core 0: 1.1, core 1: 1.1)
+ *   Verify: C is rejected even though global utilization would allow it.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 25 )
+
+static void vTask25Body( void * pvParams )
+{
+    TickType_t xC = ( TickType_t ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xC ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 25: per-core rejection ===\r\n" );
+    printf( "Expected: A=ADMITTED, B=ADMITTED, C=REJECTED\r\n\r\n" );
+
+    BaseType_t xA = xTaskCreateEDF( vTask25Body, "P25_A", 512, (void *) MS( 90 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 90 ), 0, NULL );
+    BaseType_t xB = xTaskCreateEDF( vTask25Body, "P25_B", 512, (void *) MS( 90 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 90 ), 0, NULL );
+    BaseType_t xC = xTaskCreateEDF( vTask25Body, "P25_C", 512, (void *) MS( 20 ), 2,
+                                    MS( 100 ), MS( 100 ), MS( 20 ), 0, NULL );
+
+    printf( "Task A: %s\r\n", xA == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task B: %s\r\n", xB == pdPASS ? "ADMITTED" : "REJECTED" );
+    printf( "Task C: %s\r\n", xC == pdPASS ? "ADMITTED" : "REJECTED" );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 25 */
+
+/* -----------------------------------------------------------------------
+ * TEST 26 — Partitioned EDF: no migration across jobs
+ *   3 tasks on 2 cores. Each task prints its running core via the switch log.
+ *   After 10 seconds, drain the switch log and verify each task always
+ *   appears on the same core across all its jobs.
+ *   Task A: T=100, D=100, C=40  → core 0
+ *   Task B: T=150, D=150, C=40  → core 0
+ *   Task C: T=200, D=200, C=60  → core 1 (core 0 would reach 107%)
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 26 )
+
+static void vTask26Body( void * pvParams )
+{
+    TickType_t xC = ( TickType_t ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xC ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask26Drain( void * pvParams )
+{
+    ( void ) pvParams;
+    vTaskDelay( MS( 10000 ) );
+    printf( "\r\n--- Switch log (verify no task changes core) ---\r\n" );
+    vEDFDrainSwitchLog();
+    printf( "--- End of log ---\r\n" );
+    vTaskDelete( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 26: no migration ===\r\n" );
+    printf( "A,B → C0; C → C1. Each task must stay on its assigned core.\r\n\r\n" );
+
+    xTaskCreateEDF( vTask26Body, "P26_A", 512, (void *) MS( 40 ), 2,
+                    MS( 100 ), MS( 100 ), MS( 40 ), 0, NULL );
+    xTaskCreateEDF( vTask26Body, "P26_B", 512, (void *) MS( 40 ), 2,
+                    MS( 150 ), MS( 150 ), MS( 40 ), 0, NULL );
+    xTaskCreateEDF( vTask26Body, "P26_C", 512, (void *) MS( 60 ), 2,
+                    MS( 200 ), MS( 200 ), MS( 60 ), 0, NULL );
+
+    xTaskCreate( vTask26Drain, "Drain", 512, NULL, 3, NULL );
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 26 */
+
+/* -----------------------------------------------------------------------
+ * TEST 27 — Partitioned EDF: deadline miss detection
+ *   Same structure as Test 22 but under partitioned scheduling.
+ *   Task A: T=200, D=100, C=50 (declared). First 2 jobs run 120ms → miss.
+ *   Verify: miss log reports overruns for first 2 jobs.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 27 )
+
+static volatile UBaseType_t uxJob27Count = 0;
+
+static void vTask27Overrun( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        uxJob27Count++;
+        TickType_t xRunTime = ( uxJob27Count <= 2 ) ? MS( 120 ) : MS( 50 );
+
+        if( uxJob27Count <= 2 )
+        {
+            printf( "Job %lu: running 120ms (will miss D=100)\r\n",
+                    ( unsigned long ) uxJob27Count );
+        }
+
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < xRunTime ) { __asm volatile ( "nop" ); }
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Partitioned EDF Test 27: deadline miss detection ===\r\n" );
+    printf( "Task runs 120ms with D=100 for first 2 jobs, expect miss log entries\r\n\r\n" );
+
+    xTaskCreateEDF( vTask27Overrun, "P27_OVR", 512, NULL, 2,
+                    MS( 200 ), MS( 100 ), MS( 50 ), 0, NULL );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 27 */
