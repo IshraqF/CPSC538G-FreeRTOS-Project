@@ -1728,7 +1728,7 @@ BaseType_t xQueueSemaphoreTake( QueueHandle_t xQueue,
 
                 #if ( configUSE_SRP == 1 )
                 {
-                    /* Ceiling push */
+                    /* push SRP ceiling */
                     #if ( configUSE_MUTEXES == 1 )
                     if( pxQueue->uxQueueType != queueQUEUE_IS_MUTEX )
                     #endif
@@ -2459,7 +2459,7 @@ static BaseType_t prvCopyDataToQueue( Queue_t * const pxQueue,
 
         #if ( configUSE_SRP == 1 )
         {
-            /* SRP ceiling pop */
+            /* pop SRP ceiling */
             #if ( configUSE_MUTEXES == 1 )
             if( pxQueue->uxQueueType != queueQUEUE_IS_MUTEX )
             #endif

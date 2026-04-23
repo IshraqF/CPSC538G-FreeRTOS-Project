@@ -60,7 +60,7 @@ else:
 
 ### LL Bound
 
-For implicit deadlines, Liu & Layland utilization bound: `sum(C_i / T_i) <= 1.0`. Also checks per-task feasibility: `C_i + B_i <= T_i`, where B_i is worst-case blocking time provided by user as `xBlockingTime` parameter to `xTaskCreateEDF()`. For EDF-only tests, B_i=0.
+For implicit deadlines, Liu & Layland utilization bound: `sum(C_i / T_i) <= 1.0`. Also checks per-task feasibility: `C_i + B_i <= T_i`, where B_i is worst-case blocking time provided by user as `xBlockingTime` parameter to `xTaskCreateEDF()`. For EDF only tests, B_i=0.
 
 ### Processor Demand Criterion
 
@@ -82,14 +82,14 @@ Checked at scheduling points `t = n * T_i + D_i` up to `2 * max(D_i)`. The test 
 
 ## Unblock Handling
 
-When an EDF task's delay expires and it wakes up, `prvEDFUpdateJobOnUnblock()` sets a fresh absolute deadline based on the current tick before putting the task back on the EDF ready list.
+When an EDF task's delay expires and it wakes up, `prvEDFUpdateJobOnUnblock()` refreshes absolute deadline based on the current tick before inserting into the EDF ready list.
 
 FreeRTOS normally uses a priority bitmap (`uxTopReadyPriority`) to quickly find the highest fixed-priority ready task. EDF tasks don't touch this bitmap since they have their own sorted list.
 
-Three places in the kernel handle EDF tasks waking up:
-- `xTaskIncrementTick()`: every tick, check if any delayed tasks are ready. For EDF tasks, insert into the EDF ready list instead of the fixed-priority list
+3 places in the kernel handle EDF tasks waking up:
+- `xTaskIncrementTick()`: every tick, check if any delayed tasks are ready. If it's EDF task, insert into the EDF ready list, otherwise fixed-priority list
 - `xTaskResumeAll()`: same thing, but for tasks that became ready while the scheduler was temporarily suspended
-- `vTaskDelete()`: when an EDF task is deleted, remove it from `xEDFAdmittedTasks[]` so future admission control checks don't count it
+- `vTaskDelete()`: when EDF task is deleted, remove it from `xEDFAdmittedTasks[]` so future admission control checks don't count it
 
 ## Deadline Miss Detection
 

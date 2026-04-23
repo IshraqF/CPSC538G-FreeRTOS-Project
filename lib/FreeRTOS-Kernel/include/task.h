@@ -406,17 +406,17 @@ typedef enum
                                TickType_t xBlockingTime,
                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 
-    /* Drain the deadline-miss ring buffer and print events via printf/UART. */
+    /* dump deadline-miss ring buffer over UART */
     void vEDFDrainMissLog( void ) PRIVILEGED_FUNCTION;
 
-    /* drain context-switch ring buffer & print on UART */
+    /* dump context-switch ring buffer over UART */
     void vEDFDrainSwitchLog( void ) PRIVILEGED_FUNCTION;
 
-    /* Print a table of admitted EDF task parameters via printf/UART. */
+    /* print admitted EDF task params */
     void vEDFPrintStats( void ) PRIVILEGED_FUNCTION;
 
-    /* EDF-aware periodic delay, always update xJobReleaseTime and xJobDeadline
-     * so EDF ordering is correct at high utilization. */
+    /* EDF-aware periodic delay, updates xJobReleaseTime/xJobDeadline
+     * so the EDF list stays sorted correctly */
     void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime ) PRIVILEGED_FUNCTION;
 
     #if ( configUSE_SRP == 1 )
@@ -443,7 +443,7 @@ typedef enum
         void vTaskEDFClearCore( TaskHandle_t xTask ) PRIVILEGED_FUNCTION;
     #endif
 
-    /* For testing */
+    /* for testing */
     UBaseType_t uxEDFGetAdmittedCount( void ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 

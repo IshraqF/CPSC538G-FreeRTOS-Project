@@ -50,7 +50,7 @@
 #define configMINIMAL_STACK_SIZE                ( configSTACK_DEPTH_TYPE ) 256
 #define configUSE_16_BIT_TICKS                  0
 
-/* EDF Scheduler Related */
+/* EDF Scheduler */
 #define configUSE_EDF_SCHEDULER                 1
 #define configEDF_MAX_TASKS                     100
 #define configEDF_MAX_SCHEDULING_POINTS         5000
@@ -60,7 +60,7 @@
 #define configUSE_SRP                           0
 #define configSRP_MAX_CEILING_DEPTH             8
 
-/* Multicore support, these only matter if configNUMBER_OF_CORES > 1 */
+/* multicore stuff, only matters if configNUMBER_OF_CORES > 1 */
 #define configGLOBAL_EDF_ENABLE                 1
 #define configPARTITIONED_EDF_ENABLE            !( configGLOBAL_EDF_ENABLE )
 
