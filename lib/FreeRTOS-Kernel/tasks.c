@@ -544,17 +544,17 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
         TickType_t xTaskComputationTime;   // WCET
         BaseType_t xTaskIsEDF;             // TRUE if task uses EDF scheduling
 
-        TickType_t xJobDeadline; /**< The absolute deadline of the current job. For CBS tasks, this is ds_k. */
-        TickType_t xJobReleaseTime; /**< The release time of the current job. */
+        TickType_t xJobDeadline;           // absolute deadline
+        TickType_t xJobReleaseTime;        // time of job release
 
         #if ( configUSE_CBS_SERVER == 1 )
-            BaseType_t    xTaskIsCBS;    /**< pdTRUE if this task is a CBS server. */
-            TickType_t    xCBSBudget;    /**< cs: remaining budget for the current server period. */
-            TickType_t    xCBSMaxBudget; /**< Qs: maximum budget per server period. */
-            TickType_t    xCBSPeriod;    /**< Ts: server replenishment period in ticks. */
-            UBaseType_t   xCBSPending;   /**< n: jobs in queue + currently executing job. */
-            QueueHandle_t xCBSQueue;     /**< Internal queue of CBSJob_t items. */
-            BaseType_t    xCBSExecuting; /**< Whether the server is currently executing a job. */
+            BaseType_t    xTaskIsCBS;    // TRUE if task is a CBS server
+            TickType_t    xCBSBudget;    // current budger
+            TickType_t    xCBSMaxBudget; // max budget
+            TickType_t    xCBSPeriod;    
+            UBaseType_t   xCBSPending;   // number of jobs in queue
+            QueueHandle_t xCBSQueue;     
+            BaseType_t    xCBSExecuting; // whether CBS is executing job
         #endif /* configUSE_CBS_SERVER */
 
         #if ( configUSE_SRP == 1 )

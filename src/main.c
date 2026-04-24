@@ -6,7 +6,7 @@
 #include "pico/stdlib.h"
 
 #ifndef TEST_CASE
-    #define TEST_CASE 31
+    #define TEST_CASE 35
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -1971,6 +1971,12 @@ int main( void )
 
 #endif /* TEST_CASE == 29 */
 
+/* -----------------------------------------------------------------------
+ * TEST 30 — CBS Lifecycle Test
+ *   CBS server: Qs=20ms, Ts=50ms (Us=0.4). Submit 2 short jobs from a
+ *   fixed-priority submitter at t=50ms and t=150ms. 
+ *   Verifies both jobs run to completion and Rule 1 fires on each arrival.
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 30 )
 
 static volatile uint32_t ulJobRuns = 0;
@@ -2032,6 +2038,11 @@ int main( void )
 
 #endif /* TEST_CASE == 30 */
 
+/* -----------------------------------------------------------------------
+ * TEST 31 — CBS Rule 3 Test
+ *   CBS server: Qs=20ms, Ts=50ms. Submit 1 job that runs 60ms (3× Qs).
+ *   Verifies Rule 3
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 31 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -2089,6 +2100,12 @@ int main( void )
 
 #endif /* TEST_CASE == 31 */
 
+/* -----------------------------------------------------------------------
+ * TEST 32 — CBS Rule 2 Test
+ *   CBS server: Qs=20ms, Ts=100ms (Us=0.2). Submit 2 short jobs
+ *   20ms apart. After job 1 completes, ~15ms of budget remains.
+ *   Verifies Rule 2 fires for job 2 (deadline and budget unchanged).
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 32 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -2163,6 +2180,12 @@ int main( void )
 
 #endif /* TEST_CASE == 32 */
 
+/* -----------------------------------------------------------------------
+ * TEST 33 — CBS + Hard EDF Task Test
+ *   tau1: T=50ms, D=50ms, C=10ms (U=0.2). CBS: Qs=20ms, Ts=50ms (Us=0.4).
+ *   Submit a single 80ms CBS job alongside tau1. 
+ *   Verifies Rule 3 so tau1 meets all deadlines.
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 33 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -2243,6 +2266,7 @@ int main( void )
                     pdMS_TO_TICKS( 50 ),
                     pdMS_TO_TICKS( 50 ),
                     pdMS_TO_TICKS( 10 ),
+                    0,
                     NULL );
 
     xTaskCreateCBS( "CBS", 512, 2,
@@ -2256,6 +2280,7 @@ int main( void )
                     pdMS_TO_TICKS( 200 ),
                     pdMS_TO_TICKS( 5 ),
                     pdMS_TO_TICKS( 1 ),
+                    0,
                     NULL );
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
 
@@ -2266,6 +2291,14 @@ int main( void )
 
 #endif /* TEST_CASE == 33 */
 
+/* -----------------------------------------------------------------------
+ * TEST 34 — CBS Stress Test, Two Jobs at Irregular Intervals
+ *   tau1: T=70ms, D=70ms, C=40ms (U=0.57). CBS: Qs=30ms, Ts=80ms (Us=0.375).
+ *   Submit J40 (40ms) at t=30ms and J30 (30ms) at t=167ms from a fixed-
+ *   priority submitter. Verifies Rule 3 applies to J40 and Rule 1 fires for
+ *   J30. Note: submitter is fixed-priority so J30 submission is delayed
+ *   until tau1 yields (see bugs_CBS.md).
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 34 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -2382,6 +2415,7 @@ int main( void )
                     pdMS_TO_TICKS( 70 ),
                     pdMS_TO_TICKS( 70 ),
                     pdMS_TO_TICKS( 40 ),
+                    0,
                     NULL );
 
     xTaskCreateCBS( "CBS", 512, 2,
@@ -2402,6 +2436,13 @@ int main( void )
 
 #endif /* TEST_CASE == 34 */
 
+/* -----------------------------------------------------------------------
+ * TEST 35 — CBS Stress Test, Three Jobs at Irregular Intervals (EDF Submitter)
+ *   Same as Test 34 but with 3 jobs (J40, J30, J50) and the submitter
+ *   promoted to an EDF task (T=500ms, D=5ms) so submissions are not
+ *   delayed by tau1. J30 and J50 arrive while the server is still active
+ *   and are queued without re-applying Rule 1/2.
+ * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 35 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -2515,6 +2556,7 @@ int main( void )
                     pdMS_TO_TICKS( 70 ),
                     pdMS_TO_TICKS( 70 ),
                     pdMS_TO_TICKS( 40 ),
+                    0,
                     NULL );
 
     xTaskCreateCBS( "CBS", 512, 2,
@@ -2524,7 +2566,7 @@ int main( void )
 
     configASSERT( xCBSServerHandle != NULL );
 
-    xTaskCreate( vCBSRandomSubmitter, "SUBMIT", 512, NULL, 1, NULL );
+    xTaskCreateEDF( vCBSRandomSubmitter, "SUBMIT", 512, NULL, 2, pdMS_TO_TICKS( 500 ), pdMS_TO_TICKS( 5 ), pdMS_TO_TICKS( 1 ), 0, NULL );
 
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
 
