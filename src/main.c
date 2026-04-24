@@ -5,7 +5,6 @@
 #include <stdbool.h>
 #include "pico/stdlib.h"
 
-/* Select which test to run (1–7). */
 #ifndef TEST_CASE
     #define TEST_CASE 28
 #endif
@@ -85,9 +84,10 @@ int main( void )
 #endif /* TEST_CASE == 1 */
 
 /* -----------------------------------------------------------------------
- * TEST 2 — Two implicit-deadline tasks at the LL boundary, U = 1.0
- *   Task A: T=100, D=100, C=50  → U=0.5
- *   Task B: T=200, D=200, C=100 → U=0.5
+ * TEST 2 — Two implicit-deadline tasks near the LL boundary
+ *   Task A: T=100, D=100, C=45  → U=0.45
+ *   Task B: T=200, D=200, C=95  → U=0.475
+ *   Total U = 0.925
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 2 )
 
@@ -118,7 +118,7 @@ static void vTaskB( void * pvParams )
 int main( void )
 {
     stdio_init_all();
-    printf( "\r\n=== EDF Test 2: Two tasks at LL boundary (U=1.0) ===\r\n" );
+    printf( "\r\n=== EDF Test 2: Two tasks near LL boundary (U=0.925) ===\r\n" );
 
     xTaskCreateEDF( vTaskA, "T2_A", 512, NULL, 2, MS( 100 ), MS( 100 ), MS( 45 ),  0, NULL );
     xTaskCreateEDF( vTaskB, "T2_B", 512, NULL, 2, MS( 200 ), MS( 200 ), MS( 95 ), 0, NULL );
@@ -381,36 +381,16 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 8 — SRP blocking: two EDF tasks sharing one mutex
  *
- *   Task H: T=200, D=200, C=30 ms  (locks R for 10 ms in the middle)
- *   Task L: T=400, D=400, C=190 ms (locks R at ~10 ms, holds for 150 ms)
- *   R ceiling = min(200, 400) = 200
- *   Total U = 30/200 + 190/400 = 0.15 + 0.475 = 0.625 (schedulable)
+ *   Task H: T=200, D=200, C=30   (work 10, lock R 10, work 10)
+ *   Task L: T=600, D=600, C=280  (work 80, lock R 150, work remaining)
+ *   R ceiling = min(200, 600) = 200
+ *   U = 30/200 + 280/600 = 0.15 + 0.467 = 0.617
  *
- *   Timeline (first hyper-period):
- *     t=0:   Both ready. H(D=200) runs first (shorter deadline).
- *     t=30:  H finishes job 1. L(D=400) starts, locks R at ~t=40.
- *     t=40:  L holds R → system ceiling = 200.
- *     t=190: L unlocks R → system ceiling = portMAX_DELAY.
- *     t=200: H's 2nd job arrives. L still running (non-CS work).
- *            H(D=400) preempts L because ceiling is clear.
+ *   L locks R at ~t=80, holds until ~t=230. At t=200 H's 2nd job arrives
+ *   but ceiling=200, H's preemption level=200, 200 < 200 is FALSE so
+ *   H is SRP-blocked until L unlocks at ~t=230.
  *
- *   To force actual SRP blocking, we offset L so it holds R across
- *   H's period boundary:
- *     - L locks R early in its job and holds it for 150 ms.
- *     - At t=200, L still holds R (locked at ~40, unlocked at ~190).
- *
- *   Wait — that doesn't span t=200. Let's make L lock R later:
- *     - L works 80 ms, locks R at ~t=110, holds for 150 ms → unlocks ~t=260.
- *     - At t=200, H's 2nd job arrives. L holds R, ceiling=200.
- *       H's absolute deadline=400. H's preemption level (relative D)=200.
- *       SRP test: 200 < 200 → FALSE. H is SRP-blocked!
- *     - At t=260, L unlocks R, ceiling clears. H preempts and runs.
- *     - H must finish by absolute deadline 400: starts ~260, C=30, done ~290. OK.
- *
- *   Expected:
- *     - SRP log shows L lock at ~110, unlock at ~260
- *     - H is delayed from t=200 until ~t=260 (SRP blocking)
- *     - Zero deadline misses
+ *   Expected: SRP log shows lock/unlock, H delayed ~30ms, zero misses.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 8 )
 
@@ -588,21 +568,14 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 13 — Nested resources: ceiling stack push/pop correctness
  *
- *   Task H: T=200, D=200, C=30 (uses R1 briefly)
- *   Task L: T=600, D=600, C=300 (uses R2 for a long time, R1 nested inside)
- *   R1 ceiling = min(200, 600) = 200 (both H and L use R1)
- *   R2 ceiling = 600             (only L uses R2)
+ *   Task H: T=200, D=200, C=30   (uses R1 briefly)
+ *   Task L: T=600, D=600, C=300  (uses R2, then R1 nested inside R2)
+ *   R1 ceiling = min(200, 600) = 200,  R2 ceiling = 600
  *
- *   Key timeline (first hyper-period):
- *     t=0:   H runs first (shorter deadline).
- *     t=30:  H done. L starts.
- *     t=80:  L takes R2 → ceiling = 600.
- *     t=180: L takes R1 nested → ceiling = min(600,200) = 200.
- *     t=200: H's 2nd period. SRP test: 200 < 200 → FALSE. H BLOCKED.
- *     t=280: L releases R1 → ceiling = 600. H preempts (200 < 600).
- *     t=330: L releases R2 → ceiling = portMAX_DELAY.
- *
- *   Expected SRP log shows nested push(600), push(200), pop(200), pop(600).
+ *   L takes R2 at ~t=80 (ceil=600), nests R1 at ~t=180 (ceil=200).
+ *   At t=200 H arrives but 200 < 200 is FALSE so H is SRP-blocked.
+ *   L releases R1 at ~t=280 (ceil back to 600), H preempts.
+ *   SRP log should show push(600), push(200), pop(200), pop(600).
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 13 )
 
@@ -735,21 +708,13 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 14 — SRP prevents deadlock (opposite lock order)
  *
- *   Task A: T=300, D=300, C=60 (takes R1, then R2 while holding R1)
- *   Task B: T=900, D=900, C=500 (takes R2, then R1 while holding R2)
- *   R1 ceiling = min(300, 900) = 300
- *   R2 ceiling = min(300, 900) = 300
+ *   Task A: T=300, D=300, C=60   (takes R1 then R2)
+ *   Task B: T=900, D=900, C=500  (takes R2 then R1 — opposite order)
+ *   R1 ceiling = min(300, 900) = 300,  R2 ceiling = 300
  *
- *   Without SRP, this DEADLOCKS:
- *     A holds R1, waits for R2. B holds R2, waits for R1.
- *
- *   With SRP:
- *     When B holds R2, ceiling = 300. A's preemption level (D=300):
- *     300 < 300 → FALSE. A is SRP-blocked, cannot start.
- *     B finishes all critical sections, releases everything.
- *     Then A runs, takes R1, takes R2 (both free). No deadlock.
- *
- *   Expected: zero deadlocks, zero deadline misses, stable periodic execution.
+ *   Without SRP this deadlocks. With SRP, when B holds R2 the ceiling
+ *   is 300. A's preemption level is 300, so 300 < 300 is FALSE and A
+ *   is blocked until B releases everything. No deadlock possible.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 14 )
 
@@ -852,30 +817,9 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 15 — SRP internal state verification
  *
- *   Single-task test that performs a known sequence of lock/unlock operations
- *   and checks xSRPGetCurrentCeiling() after EVERY step to verify the
- *   ceiling stack state is exactly correct.
- *
- *   Resources:
- *     R1: ceiling = 100
- *     R2: ceiling = 300
- *     R3: ceiling = 500
- *
- *   Sequence and expected system ceiling after each operation:
- *     Step 0: Nothing locked             → ceiling = MAX (4294967295)
- *     Step 1: Take R2 (300)              → ceiling = 300
- *     Step 2: Take R1 (100) nested       → ceiling = 100
- *     Step 3: Release R1                 → ceiling = 300
- *     Step 4: Release R2                 → ceiling = MAX
- *     Step 5: Take R1 (100)              → ceiling = 100
- *     Step 6: Take R3 (500) nested       → ceiling = 100  (R1 still min)
- *     Step 7: Take R2 (300) nested       → ceiling = 100  (R1 still min)
- *     Step 8: Release R2                 → ceiling = 100  (R1 still min)
- *     Step 9: Release R3                 → ceiling = 100  (only R1 left)
- *     Step 10: Release R1                → ceiling = MAX
- *
- *   This also tests: triple nesting, releasing middle of stack,
- *   minimum tracking when non-minimum is pushed/popped.
+ *   Single task locks/unlocks R1(ceil=100), R2(ceil=300), R3(ceil=500) in
+ *   various nesting orders. After each operation, checks ceiling value and
+ *   stack depth match expectations. Tests triple nesting and min tracking.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 15 )
 
@@ -1022,27 +966,10 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 16 — Admission control with SRP blocking times
  *
- * Behavioral: verifies that xTaskCreateEDF returns pdPASS / pdFAIL for
- * each of 8 scenarios covering every rejection path in the admission
- * control logic.
- *
- * Internal exposure: after every call, the admitted-task count from
- * uxEDFGetAdmittedCount() is checked.  Both the decision AND the count
- * must match expectations for the step to pass.  The expected internal
- * state (C+B arithmetic, utilisation sum, demand-bound value) is printed
- * alongside each result so the reader can follow the reasoning.
- *
- * Scenarios
- *   LL path (all implicit-deadline tasks, D == T):
- *     1. T1  T=1000 C=300 B=100  → ADMIT  (C+B=400≤1000, U=0.30, sum=0.30)
- *     2. T2  T=500  C=150 B=50   → ADMIT  (C+B=200≤500,  U=0.30, sum=0.60)
- *     3. TR1 T=300  C=200 B=150  → REJECT (C+B=350 > D=300)
- *     4. TR2 T=400  C=300 B=101  → REJECT (C+B=401 > D=400, boundary)
- *     5. TR3 T=200  C=130 B=0    → REJECT (C+B OK, sum=1.25 > 1.0)
- *     6. T3  T=2000 C=100 B=50   → ADMIT  (C+B=150≤2000, U=0.05, sum=0.65)
- *   Demand-bound path (constrained deadline D < T):
- *     7. T4  T=1000 D=800 C=100 B=50  → ADMIT  (h(800)=300 ≤ 800)
- *     8. TR4 T=800  D=800 C=200 B=400 → REJECT (h(800)=850 > 800 via large B)
+ *   8 scenarios covering every rejection path: C+B > D, U > 1.0,
+ *   and demand-bound failure. Both the admit/reject decision and the
+ *   internal admitted-task count are verified after each step.
+ *   See inline comments in main() for per-step params and reasoning.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 16 )
 
@@ -1201,7 +1128,6 @@ int main( void )
  *            Total stack memory = 1 × 256 × 4 = 1,024 bytes.
  *
  *   Compare heap usage before/after to measure actual savings.
- * this is the quantitative study for the assignment spec
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 11 ) || ( TEST_CASE == 12 )
 
