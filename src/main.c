@@ -6,12 +6,12 @@
 #include "pico/stdlib.h"
 
 #ifndef TEST_CASE
-    #define TEST_CASE 35
+    #define TEST_CASE 32
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
 
-/* LED blink task — 100 ms on, 100 ms off (200 ms period).
+/* LED blink task
  * Runs at priority 1 (background), preempted by all EDF tasks.
  */
 static void vLEDTask( void * pvParams )
@@ -27,20 +27,7 @@ static void vLEDTask( void * pvParams )
     }
 }
 
-void vTaskSwitchedOutHook(void)
-{
-    UBaseType_t gpio = uxTaskGPIOGet();
-    gpio_put(gpio, 0); // Turn off GPIO for the task
-}
-
-// Hook called when a task is switched in (optional)
-void vTaskSwitchedInHook(void)
-{
-    UBaseType_t gpio = uxTaskGPIOGet();
-    gpio_put(gpio, 1); // Turn off GPIO for the task
-}
-
-/* UART drain task — drains both ring buffers and prints via printf.
+/* drains both ring buffers and prints via printf.
  * Runs at priority 3, above EDF tasks, so the log never starves.
  */
 static void vUARTDrainTask( void * pvParams )
@@ -2576,3 +2563,90 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 35 */
+
+/* -----------------------------------------------------------------------
+ * TEST 36 — EDF: admission control rejection at runtime
+ *   Spawner runs after the scheduler has started and adds EDF tasks
+ *   one at a time, 500ms apart.  All tasks are implicit-deadline
+ *   (D == T), so the LL bound applies: sum(C_i / T_i) <= 1.0.
+ *
+ *   DYN_1: T=1000, C=300  U=0.30  running total=0.30  ADMITTED
+ *   DYN_2: T=1000, C=300  U=0.30  running total=0.60  ADMITTED
+ *   DYN_3: T=1000, C=300  U=0.30  running total=0.90  ADMITTED
+ *   DYN_4: T=1000, C=300  U=0.30  would push to 1.20  REJECTED
+ *
+ *   Expected final admitted count = 3.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 36 )
+
+static void vTask36Worker( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = xTaskGetTickCount();
+
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 300 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vTask36Spawner( void * pvParams )
+{
+    ( void ) pvParams;
+
+    static const struct
+    {
+        const char * pcName;
+        const char * pcExpected;
+    } xJobs[] =
+    {
+        { "DYN_1", "ADMITTED" },   /* total U = 0.30 */
+        { "DYN_2", "ADMITTED" },   /* total U = 0.60 */
+        { "DYN_3", "ADMITTED" },   /* total U = 0.90 */
+        { "DYN_4", "REJECTED" },   /* total U = 1.20 > 1.0 */
+    };
+
+    UBaseType_t ux;
+
+    for( ux = 0; ux < ( UBaseType_t ) ( sizeof( xJobs ) / sizeof( xJobs[ 0 ] ) ); ux++ )
+    {
+        vTaskDelay( MS( 500 ) );
+
+        BaseType_t xRet = xTaskCreateEDF( vTask36Worker,
+                                          xJobs[ ux ].pcName,
+                                          512, NULL, 2,
+                                          MS( 1000 ), MS( 1000 ), MS( 300 ),
+                                          0, NULL );
+
+        printf( "t=%lu  %-6s: %-9s (expected: %s)  admitted=%lu\r\n",
+                ( unsigned long ) xTaskGetTickCount(),
+                xJobs[ ux ].pcName,
+                xRet == pdPASS ? "ADMITTED" : "REJECTED",
+                xJobs[ ux ].pcExpected,
+                ( unsigned long ) uxEDFGetAdmittedCount() );
+    }
+
+    printf( "\r\nSpawner done — final admitted count = %lu (expected 3)\r\n",
+            ( unsigned long ) uxEDFGetAdmittedCount() );
+
+    vTaskDelete( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Test 36: Global EDF admission control rejection at runtime ===\r\n" );
+    printf( "Spawner adds 4 tasks (T=D=1000ms, C=300ms, U=0.30 each) 500ms apart\r\n" );
+    printf( "Tasks 1-3 admitted (U=0.9), task 4 rejected (U would be 1.2 > 1.0)\r\n\r\n" );
+
+    xTaskCreate( vTask36Spawner, "Spawner", 512, NULL, 3, NULL );
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 36 */

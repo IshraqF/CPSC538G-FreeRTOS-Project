@@ -350,28 +350,46 @@
  * Place the task represented by pxTCB into the appropriate ready list for
  * the task.  It is inserted at the end of the list.
  */
-#define prvAddTaskToReadyList( pxTCB )                                                                     \
-    do {                                                                                                   \
-        traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                           \
-        if( ( configUSE_EDF_SCHEDULER == 1 ) && ( ( pxTCB )->xTaskIsEDF == pdTRUE ) )                      \
-        {                                                                                                  \
-            if( ( configUSE_CBS_SERVER == 1 ) && ( ( pxTCB )->xTaskIsCBS == pdTRUE ) )                     \
+#if ( configUSE_CBS_SERVER == 1 )
+    #define prvAddTaskToReadyList( pxTCB )                                                                 \
+        do {                                                                                               \
+            traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                       \
+            if( ( configUSE_EDF_SCHEDULER == 1 ) && ( ( pxTCB )->xTaskIsEDF == pdTRUE ) )                  \
             {                                                                                              \
-                prvCBSAddToReadyList( ( pxTCB ) );                                                         \
+                if( ( pxTCB )->xTaskIsCBS == pdTRUE )                                                      \
+                {                                                                                          \
+                    prvCBSAddToReadyList( ( pxTCB ) );                                                     \
+                }                                                                                          \
+                else                                                                                       \
+                {                                                                                          \
+                    prvEDFAddToReadyList( ( pxTCB ) );                                                     \
+                }                                                                                          \
             }                                                                                              \
             else                                                                                           \
             {                                                                                              \
+                taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                        \
+                listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ),                           \
+                                &( ( pxTCB )->xStateListItem ) );                                          \
+            }                                                                                              \
+            tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                  \
+        } while( 0 )
+#else /* configUSE_CBS_SERVER == 0 */
+    #define prvAddTaskToReadyList( pxTCB )                                                                 \
+        do {                                                                                               \
+            traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                       \
+            if( ( configUSE_EDF_SCHEDULER == 1 ) && ( ( pxTCB )->xTaskIsEDF == pdTRUE ) )                  \
+            {                                                                                              \
                 prvEDFAddToReadyList( ( pxTCB ) );                                                         \
             }                                                                                              \
-        }                                                                                                  \
-        else                                                                                               \
-        {                                                                                                  \
-            taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                            \
-            listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ),                               \
-                            &( ( pxTCB )->xStateListItem ) );                                              \
-        }                                                                                                  \
-        tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                      \
-    } while( 0 )
+            else                                                                                           \
+            {                                                                                              \
+                taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                        \
+                listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ),                           \
+                                &( ( pxTCB )->xStateListItem ) );                                          \
+            }                                                                                              \
+            tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                  \
+        } while( 0 )
+#endif /* configUSE_CBS_SERVER */
 /*-----------------------------------------------------------*/
 
 /*

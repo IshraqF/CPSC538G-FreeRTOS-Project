@@ -158,12 +158,6 @@ to exclude the API function. */
 #define INCLUDE_xTaskResumeFromISR              1
 #define INCLUDE_xQueueGetMutexHolder            1
 
-// /* Forward declarations for trace hook callbacks defined in main.c. */
-// void vTaskSwitchedOutHook( void );
-// void vTaskSwitchedInHook( void );
-
 // /* A header file that defines trace macro can be included here. */
-// #define traceTASK_SWITCHED_OUT() vTaskSwitchedOutHook()
-// #define traceTASK_SWITCHED_IN()  vTaskSwitchedInHook()
 
 #endif /* FREERTOS_CONFIG_H */
