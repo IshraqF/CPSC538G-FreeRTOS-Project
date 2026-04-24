@@ -43,8 +43,8 @@
 #include "stack_macros.h"
 
 #if ( configUSE_EDF_SCHEDULER == 1 )
-    #include <stdio.h>  /* printf() used in EDF debug log drain functions. */
-    #include <string.h> /* strncpy() used in ring-buffer miss-log writer.  */
+    #include <stdio.h>  /* for printf() in EDF debug log */
+    #include <string.h> /* for strncpy() in miss-log writer */
 #endif
 
 #if ( configUSE_CBS_SERVER == 1 )
@@ -200,16 +200,46 @@
 
 /*-----------------------------------------------------------*/
 
+    /* EDF ready list for single and multi-core */
+    #if ( configPARTITIONED_EDF_ENABLE == 1 )
+        #define edfREADY_LIST    xEDFReadyTasksList[ 0 ]
+    #else
+        #define edfREADY_LIST    xEDFReadyTasksList
+    #endif
+
     #if ( configNUMBER_OF_CORES == 1 )
         #define taskSELECT_HIGHEST_PRIORITY_TASK()                                                              \
     do {                                                                                                        \
-        /* EDF tasks take absolute priority over all fixed-priority tasks. */                                   \
-        if( ( configUSE_EDF_SCHEDULER == 1 ) &&                                                                 \
-            ( listLIST_IS_EMPTY( &xEDFReadyTasksList ) == pdFALSE ) )                                           \
-        {                                                                                                       \
-            pxCurrentTCB = listGET_OWNER_OF_HEAD_ENTRY( &xEDFReadyTasksList );                                  \
+        /* EDF tasks always run before fixed-priority */                                                   \
+        TCB_t * pxEDFCandidate = NULL;                                                                          \
                                                                                                                 \
-            /* Log the switch event into the ring buffer. */                                                    \
+        if( ( configUSE_EDF_SCHEDULER == 1 ) &&                                                                 \
+            ( listLIST_IS_EMPTY( &edfREADY_LIST ) == pdFALSE ) )                                                \
+        {                                                                                                       \
+            const ListItem_t * pxEndMarker = listGET_END_MARKER( &edfREADY_LIST );                              \
+            ListItem_t * pxIterator = listGET_HEAD_ENTRY( &edfREADY_LIST );                                     \
+                                                                                                                \
+            while( pxIterator != ( ListItem_t * ) pxEndMarker )                                                 \
+            {                                                                                                   \
+                TCB_t * pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );                              \
+                                                                                                                \
+                if( ( configUSE_SRP != 1 ) || ( pxTCB == pxCurrentTCB ) ||                                      \
+                    ( pxTCB->xPreemptionLevel < xSRPCurrentCeiling ) ||                                         \
+                    prvSRPTaskOwnsCeiling( pxTCB ) )                                                            \
+                {                                                                                               \
+                    pxEDFCandidate = pxTCB;                                                                     \
+                    break;                                                                                      \
+                }                                                                                                \
+                                                                                                                \
+                pxIterator = listGET_NEXT( pxIterator );                                                        \
+            }                                                                                                   \
+        }                                                                                                       \
+                                                                                                                \
+        if( pxEDFCandidate != NULL )                                                                            \
+        {                                                                                                       \
+            pxCurrentTCB = pxEDFCandidate;                                                                      \
+                                                                                                                \
+            /* log the switch into ring buffer */                                                           \
             if( configEDF_ENABLE_DEBUG_LOG == 1 )                                                               \
             {                                                                                                   \
                 UBaseType_t uxWriteSlot = uxEDFSwitchLogHead % edfSWITCH_LOG_SIZE;                              \
@@ -223,7 +253,7 @@
                 xEDFSwitchLog[ uxWriteSlot ].xDeadline = pxCurrentTCB->xJobDeadline;                            \
                 uxEDFSwitchLogHead = ( uxEDFSwitchLogHead + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );                 \
                                                                                                                 \
-                /* Drop oldest entry if head has lapped tail. */                                                \
+                /* drop oldest if buffer full */                                                              \
                 if( uxEDFSwitchLogHead == uxEDFSwitchLogTail )                                                  \
                 {                                                                                               \
                     uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );             \
@@ -234,15 +264,14 @@
         {                                                                                                       \
             UBaseType_t uxTopPriority = uxTopReadyPriority;                                                     \
                                                                                                                 \
-            /* Find the highest priority queue that contains ready tasks. */                                    \
+            /* fallback to highest fixed prio ready queue */                                                \
             while( listLIST_IS_EMPTY( &( pxReadyTasksLists[ uxTopPriority ] ) ) != pdFALSE )                    \
             {                                                                                                   \
                 configASSERT( uxTopPriority );                                                                  \
                 --uxTopPriority;                                                                                \
             }                                                                                                   \
                                                                                                                 \
-            /* listGET_OWNER_OF_NEXT_ENTRY indexes through the list, so the tasks of                            \
-             * the  same priority get an equal share of the processor time. */                                  \
+            /* round-robin among tasks of same priority */                                                      \
             listGET_OWNER_OF_NEXT_ENTRY( pxCurrentTCB, &( pxReadyTasksLists[ uxTopPriority ] ) );               \
             uxTopReadyPriority = uxTopPriority;                                                                 \
         }                                                                                                       \
@@ -510,10 +539,10 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     #endif
 
     #if ( configUSE_EDF_SCHEDULER == 1 )
-        TickType_t xTaskPeriod; /**< The period of the task. */
-        TickType_t xTaskDeadline; /**< The relative deadline of the task. */
-        TickType_t xTaskComputationTime; /**< The computation time of the task. */
-        BaseType_t xTaskIsEDF; /**< Whether the task is scheduled using EDF or not. */
+        TickType_t xTaskPeriod;
+        TickType_t xTaskDeadline;          // relative deadline
+        TickType_t xTaskComputationTime;   // WCET
+        BaseType_t xTaskIsEDF;             // TRUE if task uses EDF scheduling
 
         TickType_t xJobDeadline; /**< The absolute deadline of the current job. For CBS tasks, this is ds_k. */
         TickType_t xJobReleaseTime; /**< The release time of the current job. */
@@ -527,7 +556,11 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
             QueueHandle_t xCBSQueue;     /**< Internal queue of CBSJob_t items. */
             BaseType_t    xCBSExecuting; /**< Whether the server is currently executing a job. */
         #endif /* configUSE_CBS_SERVER */
-    #endif /* configUSE_EDF_SCHEDULER */
+
+        #if ( configUSE_SRP == 1 )
+            TickType_t xPreemptionLevel;   //shorter deadline = higher preemption level
+        #endif
+    #endif
 } tskTCB;
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
@@ -559,20 +592,30 @@ PRIVILEGED_DATA static List_t * volatile pxOverflowDelayedTaskList;      /**< Po
 PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Tasks that have been readied while the scheduler was suspended.  They will be moved to the ready list when the scheduler is resumed. */
 
 #if ( configUSE_EDF_SCHEDULER == 1 )
-    PRIVILEGED_DATA static List_t xEDFReadyTasksList; /**< EDF ready tasks sorted ascending by xJobDeadline. */
+    #if ( configPARTITIONED_EDF_ENABLE == 1 )
+        PRIVILEGED_DATA static List_t xEDFReadyTasksList[ configNUMBER_OF_CORES ]; // Per-core EDF ready lists
+    #else /* configGLOBAL_EDF_ENABLE */
+        PRIVILEGED_DATA static List_t xEDFReadyTasksList; // EDF ready tasks, sorted earliest deadline first
+    #endif
 
     typedef struct
     {
         TickType_t xPeriod;
-        TickType_t xDeadline;          /**< Relative deadline in ticks. */
-        TickType_t xComputationTime;   /**< WCET in ticks. */
-        BaseType_t xValid;             /**< pdTRUE when slot is occupied. */
+        TickType_t xDeadline;          // relative deadline in ticks
+        TickType_t xComputationTime;   // WCET in ticks
+        TickType_t xMaxBlockingTime;   // worst-case SRP blocking time in ticks
+        BaseType_t xValid;             // TRUE if this slot is in use
     } EDFTaskParams_t;
 
-    PRIVILEGED_DATA static EDFTaskParams_t xEDFAdmittedTasks[ configEDF_MAX_TASKS ];
-    PRIVILEGED_DATA static UBaseType_t uxEDFAdmittedTaskCount = ( UBaseType_t ) 0U;
+    #if ( configPARTITIONED_EDF_ENABLE == 1 )
+        PRIVILEGED_DATA static EDFTaskParams_t xEDFAdmittedTasks[ configNUMBER_OF_CORES ][ configEDF_MAX_TASKS ];
+        PRIVILEGED_DATA static UBaseType_t uxEDFAdmittedTaskCount[ configNUMBER_OF_CORES ];
+    #else /* configGLOBAL_EDF_ENABLE */
+        PRIVILEGED_DATA static EDFTaskParams_t xEDFAdmittedTasks[ configEDF_MAX_TASKS ];
+        PRIVILEGED_DATA static UBaseType_t uxEDFAdmittedTaskCount = ( UBaseType_t ) 0U;
+    #endif
 
-    /* Lock-free ring buffer for deadline miss log. */
+    /* ring buffer for deadline miss log */
     #define edfMISS_LOG_SIZE    ( ( UBaseType_t ) 16U )
     typedef struct
     {
@@ -585,18 +628,63 @@ PRIVILEGED_DATA static List_t xPendingReadyList;                         /**< Ta
     PRIVILEGED_DATA static volatile UBaseType_t    uxEDFMissLogHead = ( UBaseType_t ) 0U;
     PRIVILEGED_DATA static volatile UBaseType_t    uxEDFMissLogTail = ( UBaseType_t ) 0U;
 
-    /* Lock-free ring buffer for switch events. */
-    #define edfSWITCH_LOG_SIZE  ( ( UBaseType_t ) 256U )
+    /* ring buffer for context-switch log */
+    #define edfSWITCH_LOG_SIZE  ( ( UBaseType_t ) 32U )
     typedef struct
     {
         char       cName[ configMAX_TASK_NAME_LEN ];
         TickType_t xTick;
         TickType_t xDeadline;
+        #if ( configNUMBER_OF_CORES > 1 )
+            BaseType_t xCoreID;
+        #endif
     } EDFSwitchEntry_t;
 
     PRIVILEGED_DATA static volatile EDFSwitchEntry_t xEDFSwitchLog[ edfSWITCH_LOG_SIZE ];
     PRIVILEGED_DATA static volatile UBaseType_t      uxEDFSwitchLogHead = ( UBaseType_t ) 0U;
     PRIVILEGED_DATA static volatile UBaseType_t      uxEDFSwitchLogTail = ( UBaseType_t ) 0U;
+
+    #if ( configUSE_SRP == 1 )
+        /* SRP ceiling stack tracks which resource ceilings are held
+         * also stores the owner TCB so the scheduler knows who's holding what */
+        typedef struct
+        {
+            TickType_t xCeiling;
+            TCB_t *    pxOwner;
+        } SRPCeilingEntry_t;
+        PRIVILEGED_DATA static SRPCeilingEntry_t xSRPCeilingStack[ configSRP_MAX_CEILING_DEPTH ];
+        PRIVILEGED_DATA static UBaseType_t uxSRPCeilingStackTop = ( UBaseType_t ) 0U;
+        PRIVILEGED_DATA static TickType_t  xSRPCurrentCeiling   = portMAX_DELAY;
+
+        /* check if this task owns any entry on the ceiling stack */
+        static inline BaseType_t prvSRPTaskOwnsCeiling( const TCB_t * pxTCB )
+        {
+            UBaseType_t ux;
+
+            for( ux = ( UBaseType_t ) 0U; ux < uxSRPCeilingStackTop; ux++ )
+            {
+                if( xSRPCeilingStack[ ux ].pxOwner == pxTCB )
+                {
+                    return pdTRUE;
+                }
+            }
+
+            return pdFALSE;
+        }
+
+        #define srpEVENT_LOG_SIZE   ( ( UBaseType_t ) 16U )
+        typedef struct
+        {
+            char       cName[ configMAX_TASK_NAME_LEN ];
+            TickType_t xTick;
+            TickType_t xCeiling;       // which resource ceiling
+            uint8_t    ucEvent;        // 'L' = lock, 'U' = unlock
+        } SRPEventEntry_t;
+
+        PRIVILEGED_DATA static volatile SRPEventEntry_t xSRPEventLog[ srpEVENT_LOG_SIZE ];
+        PRIVILEGED_DATA static volatile UBaseType_t     uxSRPEventLogHead = ( UBaseType_t ) 0U;
+        PRIVILEGED_DATA static volatile UBaseType_t     uxSRPEventLogTail = ( UBaseType_t ) 0U;
+    #endif /* configUSE_SRP */
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( INCLUDE_vTaskDelete == 1 )
@@ -710,20 +798,23 @@ static BaseType_t prvCreateIdleTasks( void );
  */
 static void prvInitialiseTaskLists( void ) PRIVILEGED_FUNCTION;
 
-/* EDF scheduler functions. */
+/* EDF scheduler function prototypes */
 #if ( configUSE_EDF_SCHEDULER == 1 )
     static void         prvEDFAddToReadyList( TCB_t * pxTCB ) PRIVILEGED_FUNCTION;
     static void         prvEDFUpdateJobOnUnblock( TCB_t * pxTCB ) PRIVILEGED_FUNCTION;
     static void         prvEDFCheckDeadlineMiss( TickType_t xCurrentTick ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvIsImplicitDeadlineSet( void ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControlLL( TickType_t xNewPeriod,
-                                                TickType_t xNewComputationTime ) PRIVILEGED_FUNCTION;
+                                                TickType_t xNewComputationTime,
+                                                TickType_t xNewBlockingTime ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
                                                     TickType_t xNewDeadline,
-                                                    TickType_t xNewComputationTime ) PRIVILEGED_FUNCTION;
+                                                    TickType_t xNewComputationTime,
+                                                    TickType_t xNewBlockingTime ) PRIVILEGED_FUNCTION;
     static BaseType_t   prvEDFAdmissionControl( TickType_t xPeriod,
                                               TickType_t xDeadline,
-                                              TickType_t xComputationTime ) PRIVILEGED_FUNCTION;
+                                              TickType_t xComputationTime,
+                                              TickType_t xBlockingTime ) PRIVILEGED_FUNCTION;
     #if ( configUSE_CBS_SERVER == 1 )
         static void prvCBSAddToReadyList( TCB_t * pxTCB ) PRIVILEGED_FUNCTION;
     #endif
@@ -1041,6 +1132,94 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
         /* This must be called from a critical section. */
         configASSERT( portGET_CRITICAL_NESTING_COUNT( xCurrentCoreID ) > 0U );
 
+        /* global EDF: try to preempt the core running the task with the latest deadline */
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configGLOBAL_EDF_ENABLE == 1 ) )
+        if( pxTCB->xTaskIsEDF == pdTRUE )
+        {
+            if( taskTASK_IS_RUNNING( pxTCB ) == pdFALSE )
+            {
+                TickType_t xLatestDeadline = 0;
+                BaseType_t xTargetCore = ( BaseType_t ) -1;
+
+                for( xCoreID = ( BaseType_t ) 0; xCoreID < ( BaseType_t ) configNUMBER_OF_CORES; xCoreID++ )
+                {
+                    if( ( taskTASK_IS_RUNNING( pxCurrentTCBs[ xCoreID ] ) != pdFALSE ) &&
+                        ( xYieldPendings[ xCoreID ] == pdFALSE ) )
+                    {
+                        #if ( configUSE_CORE_AFFINITY == 1 )
+                            if( ( pxTCB->uxCoreAffinityMask & ( ( UBaseType_t ) 1U << ( UBaseType_t ) xCoreID ) ) == 0U )
+                            {
+                                continue;
+                            }
+                        #endif
+
+                        if( pxCurrentTCBs[ xCoreID ]->xTaskIsEDF != pdTRUE )
+                        {
+                            /* non-EDF task, can always preempt */
+                            if( xTargetCore < 0 || xLatestDeadline == 0 )
+                            {
+                                xLatestDeadline = 0;
+                                xTargetCore = xCoreID;
+                            }
+                        }
+                        else if( pxCurrentTCBs[ xCoreID ]->xJobDeadline > xLatestDeadline )
+                        {
+                            /* EDF task with a later deadline, worth preempting */
+                            if( pxTCB->xJobDeadline < pxCurrentTCBs[ xCoreID ]->xJobDeadline )
+                            {
+                                xLatestDeadline = pxCurrentTCBs[ xCoreID ]->xJobDeadline;
+                                xTargetCore = xCoreID;
+                            }
+                        }
+                    }
+                }
+
+                if( xTargetCore >= 0 )
+                {
+                    prvYieldCore( xTargetCore );
+                }
+            }
+
+            return;
+        }
+        #endif /* configUSE_EDF_SCHEDULER && configGLOBAL_EDF_ENABLE */
+
+        /* partitioned EDF: preempt only the assigned core of this task */
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
+        if( pxTCB->xTaskIsEDF == pdTRUE )
+        {
+            if( taskTASK_IS_RUNNING( pxTCB ) == pdFALSE )
+            {
+                /* get assigned core from the task's affinity mask */
+                BaseType_t xAssignedCore = ( BaseType_t ) -1;
+
+                for( xCoreID = ( BaseType_t ) 0; xCoreID < ( BaseType_t ) configNUMBER_OF_CORES; xCoreID++ )
+                {
+                    if( pxTCB->uxCoreAffinityMask == ( ( UBaseType_t ) 1U << ( UBaseType_t ) xCoreID ) )
+                    {
+                        xAssignedCore = xCoreID;
+                        break;
+                    }
+                }
+
+                if( ( xAssignedCore >= 0 ) &&
+                    ( taskTASK_IS_RUNNING( pxCurrentTCBs[ xAssignedCore ] ) != pdFALSE ) &&
+                    ( xYieldPendings[ xAssignedCore ] == pdFALSE ) )
+                {
+                    TCB_t * pxRunning = pxCurrentTCBs[ xAssignedCore ];
+
+                    if( ( pxRunning->xTaskIsEDF != pdTRUE ) ||
+                        ( pxTCB->xJobDeadline < pxRunning->xJobDeadline ) )
+                    {
+                        prvYieldCore( xAssignedCore );
+                    }
+                }
+            }
+
+            return;
+        }
+        #endif /* configUSE_EDF_SCHEDULER && configPARTITIONED_EDF_ENABLE */
+
         #if ( configRUN_MULTIPLE_PRIORITIES == 0 )
 
             /* No task should yield for this one if it is a lower priority
@@ -1175,6 +1354,149 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             vListInsertEnd( &( pxReadyTasksLists[ pxCurrentTCBs[ xCoreID ]->uxPriority ] ),
                             &pxCurrentTCBs[ xCoreID ]->xStateListItem );
         }
+
+        /* GLOBALEDF: pick the ready task with earliest deadline for this core */
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configGLOBAL_EDF_ENABLE == 1 ) )
+        {
+            if( listLIST_IS_EMPTY( &xEDFReadyTasksList ) == pdFALSE )
+            {
+                const ListItem_t * pxEndMarker = listGET_END_MARKER( &xEDFReadyTasksList );
+                ListItem_t * pxIterator;
+
+                for( pxIterator = listGET_HEAD_ENTRY( &xEDFReadyTasksList );
+                     pxIterator != pxEndMarker;
+                     pxIterator = listGET_NEXT( pxIterator ) )
+                {
+                    pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );
+
+                    if( pxTCB == pxCurrentTCBs[ xCoreID ] )
+                    {
+                        /* already running on this core */
+                        pxTCB->xTaskRunState = xCoreID;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                    else if( pxTCB->xTaskRunState == taskTASK_NOT_RUNNING )
+                    {
+                        #if ( configUSE_CORE_AFFINITY == 1 )
+                            if( ( pxTCB->uxCoreAffinityMask & ( ( UBaseType_t ) 1U << ( UBaseType_t ) xCoreID ) ) == 0U )
+                            {
+                                /* affinity doesn't allow this core, skip */
+                                continue;
+                            }
+                        #endif
+
+                        /* not running anywhere, swap it in */
+                        pxCurrentTCBs[ xCoreID ]->xTaskRunState = taskTASK_NOT_RUNNING;
+                        #if ( configUSE_CORE_AFFINITY == 1 )
+                            pxPreviousTCB = pxCurrentTCBs[ xCoreID ];
+                        #endif
+                        pxTCB->xTaskRunState = xCoreID;
+                        pxCurrentTCBs[ xCoreID ] = pxTCB;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                    else
+                    {
+                        /* running on another core, skip */
+                    }
+                }
+
+                /* Log */
+                if( ( xTaskScheduled == pdTRUE ) && ( configEDF_ENABLE_DEBUG_LOG == 1 ) )
+                {
+                    UBaseType_t uxWriteSlot = uxEDFSwitchLogHead % edfSWITCH_LOG_SIZE;
+                    UBaseType_t uxCharIdx;
+
+                    for( uxCharIdx = 0U; uxCharIdx < ( UBaseType_t ) configMAX_TASK_NAME_LEN; uxCharIdx++ )
+                    {
+                        xEDFSwitchLog[ uxWriteSlot ].cName[ uxCharIdx ] = pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ];
+                        if( pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ] == '\0' ) { break; }
+                    }
+                    xEDFSwitchLog[ uxWriteSlot ].xTick     = xTickCount;
+                    xEDFSwitchLog[ uxWriteSlot ].xDeadline = pxCurrentTCBs[ xCoreID ]->xJobDeadline;
+                    #if ( configNUMBER_OF_CORES > 1 )
+                        xEDFSwitchLog[ uxWriteSlot ].xCoreID = xCoreID;
+                    #endif
+                    uxEDFSwitchLogHead = ( uxEDFSwitchLogHead + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+
+                    if( uxEDFSwitchLogHead == uxEDFSwitchLogTail )
+                    {
+                        uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+                    }
+                }
+
+                if( xTaskScheduled == pdTRUE )
+                {
+                    /* skip fixed-priority path */
+                    goto edf_selected;
+                }
+            }
+        }
+        #endif /* configUSE_EDF_SCHEDULER && configGLOBAL_EDF_ENABLE */
+
+        /* partitioned EDF: pick ready task from this core's partition */
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
+        {
+            if( listLIST_IS_EMPTY( &xEDFReadyTasksList[ xCoreID ] ) == pdFALSE )
+            {
+                const ListItem_t * pxEndMarker = listGET_END_MARKER( &xEDFReadyTasksList[ xCoreID ] );
+                ListItem_t * pxIterator;
+
+                for( pxIterator = listGET_HEAD_ENTRY( &xEDFReadyTasksList[ xCoreID ] );
+                     pxIterator != pxEndMarker;
+                     pxIterator = listGET_NEXT( pxIterator ) )
+                {
+                    pxTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxIterator );
+
+                    if( pxTCB == pxCurrentTCBs[ xCoreID ] )
+                    {
+                        pxTCB->xTaskRunState = xCoreID;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                    else if( pxTCB->xTaskRunState == taskTASK_NOT_RUNNING )
+                    {
+                        /* task is already assigned to this core */
+                        pxCurrentTCBs[ xCoreID ]->xTaskRunState = taskTASK_NOT_RUNNING;
+                        pxTCB->xTaskRunState = xCoreID;
+                        pxCurrentTCBs[ xCoreID ] = pxTCB;
+                        xTaskScheduled = pdTRUE;
+                        break;
+                    }
+                }
+
+                /* Log */
+                if( ( xTaskScheduled == pdTRUE ) && ( configEDF_ENABLE_DEBUG_LOG == 1 ) )
+                {
+                    UBaseType_t uxWriteSlot = uxEDFSwitchLogHead % edfSWITCH_LOG_SIZE;
+                    UBaseType_t uxCharIdx;
+
+                    for( uxCharIdx = 0U; uxCharIdx < ( UBaseType_t ) configMAX_TASK_NAME_LEN; uxCharIdx++ )
+                    {
+                        xEDFSwitchLog[ uxWriteSlot ].cName[ uxCharIdx ] = pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ];
+                        if( pxCurrentTCBs[ xCoreID ]->pcTaskName[ uxCharIdx ] == '\0' ) { break; }
+                    }
+                    xEDFSwitchLog[ uxWriteSlot ].xTick     = xTickCount;
+                    xEDFSwitchLog[ uxWriteSlot ].xDeadline = pxCurrentTCBs[ xCoreID ]->xJobDeadline;
+                    #if ( configNUMBER_OF_CORES > 1 )
+                        xEDFSwitchLog[ uxWriteSlot ].xCoreID = xCoreID;
+                    #endif
+                    uxEDFSwitchLogHead = ( uxEDFSwitchLogHead + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+
+                    if( uxEDFSwitchLogHead == uxEDFSwitchLogTail )
+                    {
+                        uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
+                    }
+                }
+
+                if( xTaskScheduled == pdTRUE )
+                {
+                    goto edf_selected;
+                }
+            }
+        }
+        #endif /* configUSE_EDF_SCHEDULER && configPARTITIONED_EDF_ENABLE */
 
         while( xTaskScheduled == pdFALSE )
         {
@@ -1315,6 +1637,10 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             }
         }
         #endif /* #if ( configRUN_MULTIPLE_PRIORITIES == 0 ) */
+
+        #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( ( configGLOBAL_EDF_ENABLE == 1 ) || ( configPARTITIONED_EDF_ENABLE == 1 ) ) )
+            edf_selected:
+        #endif
 
         #if ( configUSE_CORE_AFFINITY == 1 )
         {
@@ -2385,24 +2711,49 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                     }
                     else
                     {
-                        /* Remove from admitted task array so future admission
-                         * control reflects the reduced task set. */
+                        /* remove from admitted array so admission control stays accurate */
                         UBaseType_t uxDelIdx;
-                        for( uxDelIdx = 0U; uxDelIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxDelIdx++ )
+                        #if ( configPARTITIONED_EDF_ENABLE == 1 )
                         {
-                            if( ( xEDFAdmittedTasks[ uxDelIdx ].xValid == pdTRUE ) &&
-                                ( xEDFAdmittedTasks[ uxDelIdx ].xPeriod == pxTCB->xTaskPeriod ) &&
-                                ( xEDFAdmittedTasks[ uxDelIdx ].xDeadline == pxTCB->xTaskDeadline ) &&
-                                ( xEDFAdmittedTasks[ uxDelIdx ].xComputationTime == pxTCB->xTaskComputationTime ) )
+                            BaseType_t xCore;
+                            for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
                             {
-                                xEDFAdmittedTasks[ uxDelIdx ].xValid = pdFALSE;
-                                if( uxEDFAdmittedTaskCount > 0U )
+                                for( uxDelIdx = 0U; uxDelIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxDelIdx++ )
                                 {
-                                    uxEDFAdmittedTaskCount--;
+                                    if( ( xEDFAdmittedTasks[ xCore ][ uxDelIdx ].xValid == pdTRUE ) &&
+                                        ( xEDFAdmittedTasks[ xCore ][ uxDelIdx ].xPeriod == pxTCB->xTaskPeriod ) &&
+                                        ( xEDFAdmittedTasks[ xCore ][ uxDelIdx ].xDeadline == pxTCB->xTaskDeadline ) &&
+                                        ( xEDFAdmittedTasks[ xCore ][ uxDelIdx ].xComputationTime == pxTCB->xTaskComputationTime ) )
+                                    {
+                                        xEDFAdmittedTasks[ xCore ][ uxDelIdx ].xValid = pdFALSE;
+                                        if( uxEDFAdmittedTaskCount[ xCore ] > 0U )
+                                        {
+                                            uxEDFAdmittedTaskCount[ xCore ]--;
+                                        }
+                                        break;
+                                    }
                                 }
-                                break;
                             }
                         }
+                        #else /* configGLOBAL_EDF_ENABLE */
+                        {
+                            for( uxDelIdx = 0U; uxDelIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxDelIdx++ )
+                            {
+                                if( ( xEDFAdmittedTasks[ uxDelIdx ].xValid == pdTRUE ) &&
+                                    ( xEDFAdmittedTasks[ uxDelIdx ].xPeriod == pxTCB->xTaskPeriod ) &&
+                                    ( xEDFAdmittedTasks[ uxDelIdx ].xDeadline == pxTCB->xTaskDeadline ) &&
+                                    ( xEDFAdmittedTasks[ uxDelIdx ].xComputationTime == pxTCB->xTaskComputationTime ) )
+                                {
+                                    xEDFAdmittedTasks[ uxDelIdx ].xValid = pdFALSE;
+                                    if( uxEDFAdmittedTaskCount > 0U )
+                                    {
+                                        uxEDFAdmittedTaskCount--;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        #endif /* configPARTITIONED_EDF_ENABLE */
                     }
                 }
                 #else
@@ -2542,17 +2893,14 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
 #endif /* INCLUDE_vTaskDelete */
 /*-----------------------------------------------------------*/
 
-// #if (configUSE_TASK_GPIO == 1)
-//     void vTaskGPIOSet( TaskHandle_t xTask, UBaseType_t uxGPIO ){
-//         TCB_t * pxTCB;
-//         pxTCB = prvGetTCBFromHandle( xTask );
-//         pxTCB->uxGPIO = uxGPIO;
-//     }
-
-//     UBaseType_t uxTaskGPIOGet(void){
-//         return pxCurrentTCB->uxGPIO;
-//     }
-// #endif
+#if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
+    static BaseType_t prvEDFAdmissionControlPartitioned( TickType_t xPeriod,
+                                                         TickType_t xDeadline,
+                                                         TickType_t xComputationTime,
+                                                         TickType_t xBlockingTime,
+                                                         BaseType_t xCoreID );
+    static void prvEDFAddToReadyListPartitioned( TCB_t * pxTCB, BaseType_t xCoreID );
+#endif
 
 #if ( configUSE_EDF_SCHEDULER == 1 )
 
@@ -2564,7 +2912,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                                 TickType_t xPeriod,
                                 TickType_t xDeadline,
                                 TickType_t xComputationTime,
-                                // uint32_t uxGPIO,
+                                TickType_t xBlockingTime,
                                 TaskHandle_t * const pxCreatedTask )
     {
         BaseType_t xReturn;
@@ -2572,84 +2920,197 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
         TCB_t * pxNewTCB;
         UBaseType_t uxSlot;
 
-        /* --- Admission control --- */
-        taskENTER_CRITICAL();
+        #if ( configPARTITIONED_EDF_ENABLE == 1 )
         {
-            xReturn = prvEDFAdmissionControl( xPeriod, xDeadline, xComputationTime );
-        }
-        taskEXIT_CRITICAL();
-
-        if( xReturn == pdFAIL )
-        {
-            #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
-            {
-                printf( "[EDF] REJECT | task=%-16s | period=%lu deadline=%lu wcet=%lu\r\n",
-                        pcName,
-                        ( unsigned long ) xPeriod,
-                        ( unsigned long ) xDeadline,
-                        ( unsigned long ) xComputationTime );
-            }
-            #endif
-
-            return pdFAIL;
-        }
-
-        xReturn = xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters,
-                               uxPriority, &xHandle );
-
-        if( ( xReturn == pdPASS ) && ( xHandle != NULL ) )
-        {
-            pxNewTCB = ( TCB_t * ) xHandle;
+            /* first-fit core selection */
+            BaseType_t xSelectedCore = ( BaseType_t ) -1;
+            BaseType_t xCore;
 
             taskENTER_CRITICAL();
             {
-                pxNewTCB->xTaskIsEDF       = pdTRUE;
-                pxNewTCB->xTaskPeriod      = xPeriod;
-                pxNewTCB->xTaskDeadline    = xDeadline;
-                pxNewTCB->xTaskComputationTime = xComputationTime;
-                pxNewTCB->xJobReleaseTime  = xTaskGetTickCount();
-                pxNewTCB->xJobDeadline     = pxNewTCB->xJobReleaseTime + xDeadline;
-
-                /* Move xTaskCreate to the EDF ready list */
-                ( void ) uxListRemove( &( pxNewTCB->xStateListItem ) );
-                taskRESET_READY_PRIORITY( ( UBaseType_t ) 1U );
-                prvEDFAddToReadyList( pxNewTCB );
-
-                /* Register in the admitted task array for future admission control. */
-                for( uxSlot = 0U; uxSlot < ( UBaseType_t ) configEDF_MAX_TASKS; uxSlot++ )
+                for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
                 {
-                    if( xEDFAdmittedTasks[ uxSlot ].xValid == pdFALSE )
+                    if( prvEDFAdmissionControlPartitioned( xPeriod, xDeadline,
+                                                          xComputationTime, xBlockingTime,
+                                                          xCore ) == pdPASS )
                     {
-                        xEDFAdmittedTasks[ uxSlot ].xPeriod          = xPeriod;
-                        xEDFAdmittedTasks[ uxSlot ].xDeadline         = xDeadline;
-                        xEDFAdmittedTasks[ uxSlot ].xComputationTime  = xComputationTime;
-                        xEDFAdmittedTasks[ uxSlot ].xValid            = pdTRUE;
-                        uxEDFAdmittedTaskCount++;
+                        xSelectedCore = xCore;
                         break;
                     }
                 }
             }
             taskEXIT_CRITICAL();
 
-            #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+            if( xSelectedCore < 0 )
             {
-                printf( "[EDF] ADMIT | task=%-16s | period=%lu deadline=%lu wcet=%lu\r\n",
-                        pcName,
-                        ( unsigned long ) xPeriod,
-                        ( unsigned long ) xDeadline,
-                        ( unsigned long ) xComputationTime );
-            }
-            #endif
+                #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+                {
+                    printf( "[EDF] REJECT | task=%-16s | period=%lu deadline=%lu wcet=%lu\r\n",
+                            pcName,
+                            ( unsigned long ) xPeriod,
+                            ( unsigned long ) xDeadline,
+                            ( unsigned long ) xComputationTime );
+                }
+                #endif
 
-            if( pxCreatedTask != NULL )
+                return pdFAIL;
+            }
+
+            xReturn = xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters,
+                                   uxPriority, &xHandle );
+
+            if( ( xReturn == pdPASS ) && ( xHandle != NULL ) )
             {
-                *pxCreatedTask = xHandle;
+                pxNewTCB = ( TCB_t * ) xHandle;
+
+                taskENTER_CRITICAL();
+                {
+                    pxNewTCB->xTaskIsEDF           = pdTRUE;
+                    pxNewTCB->xTaskPeriod          = xPeriod;
+                    pxNewTCB->xTaskDeadline        = xDeadline;
+                    pxNewTCB->xTaskComputationTime = xComputationTime;
+                    #if ( configUSE_SRP == 1 )
+                        pxNewTCB->xPreemptionLevel = xDeadline;
+                    #endif
+                    pxNewTCB->xJobReleaseTime = xTaskGetTickCount();
+                    pxNewTCB->xJobDeadline    = pxNewTCB->xJobReleaseTime + xDeadline;
+
+                    /* Pin task to the selected core */
+                    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+                        vTaskCoreAffinitySet( xHandle, ( UBaseType_t ) 1U << ( UBaseType_t ) xSelectedCore );
+                    #endif
+
+                    ( void ) uxListRemove( &( pxNewTCB->xStateListItem ) );
+                    taskRESET_READY_PRIORITY( ( UBaseType_t ) 1U );
+                    prvEDFAddToReadyListPartitioned( pxNewTCB, xSelectedCore );
+
+                    for( uxSlot = 0U; uxSlot < ( UBaseType_t ) configEDF_MAX_TASKS; uxSlot++ )
+                    {
+                        if( xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xValid == pdFALSE )
+                        {
+                            xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xPeriod         = xPeriod;
+                            xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xDeadline        = xDeadline;
+                            xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xComputationTime = xComputationTime;
+                            xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xMaxBlockingTime = xBlockingTime;
+                            xEDFAdmittedTasks[ xSelectedCore ][ uxSlot ].xValid           = pdTRUE;
+                            uxEDFAdmittedTaskCount[ xSelectedCore ]++;
+                            break;
+                        }
+                    }
+                }
+                taskEXIT_CRITICAL();
+
+                #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+                {
+                    printf( "[EDF] ADMIT | task=%-16s | core=%ld | period=%lu deadline=%lu wcet=%lu\r\n",
+                            pcName,
+                            ( long ) xSelectedCore,
+                            ( unsigned long ) xPeriod,
+                            ( unsigned long ) xDeadline,
+                            ( unsigned long ) xComputationTime );
+                }
+                #endif
+
+                if( pxCreatedTask != NULL )
+                {
+                    *pxCreatedTask = xHandle;
+                }
+            }
+            else
+            {
+                xReturn = pdFAIL;
             }
         }
-        else
+        #else /* configGLOBAL_EDF_ENABLE */
         {
-            xReturn = pdFAIL;
+            /* run admission control */
+            taskENTER_CRITICAL();
+            {
+                xReturn = prvEDFAdmissionControl( xPeriod, xDeadline, xComputationTime, xBlockingTime );
+            }
+            taskEXIT_CRITICAL();
+
+            if( xReturn == pdFAIL )
+            {
+                #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+                {
+                    printf( "[EDF] REJECT | task=%-16s | period=%lu deadline=%lu wcet=%lu\r\n",
+                            pcName,
+                            ( unsigned long ) xPeriod,
+                            ( unsigned long ) xDeadline,
+                            ( unsigned long ) xComputationTime );
+                }
+                #endif
+
+                return pdFAIL;
+            }
+
+            xReturn = xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters,
+                                   uxPriority, &xHandle );
+
+            if( ( xReturn == pdPASS ) && ( xHandle != NULL ) )
+            {
+                pxNewTCB = ( TCB_t * ) xHandle;
+
+                taskENTER_CRITICAL();
+                {
+                    pxNewTCB->xTaskIsEDF       = pdTRUE;
+                    pxNewTCB->xTaskPeriod      = xPeriod;
+                    pxNewTCB->xTaskDeadline    = xDeadline;
+                    pxNewTCB->xTaskComputationTime = xComputationTime;
+                    #if ( configUSE_SRP == 1 )
+                        pxNewTCB->xPreemptionLevel = xDeadline;
+                    #endif
+                    pxNewTCB->xJobReleaseTime  = xTaskGetTickCount();
+                    pxNewTCB->xJobDeadline     = pxNewTCB->xJobReleaseTime + xDeadline;
+
+                    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+                        pxNewTCB->uxCoreAffinityMask = tskNO_AFFINITY;
+                    #endif
+
+                    /* move from fixed-priority list to the EDF ready list */
+                    ( void ) uxListRemove( &( pxNewTCB->xStateListItem ) );
+                    taskRESET_READY_PRIORITY( ( UBaseType_t ) 1U );
+                    prvEDFAddToReadyList( pxNewTCB );
+
+                    /* save in the admitted array for future admission checks */
+                    for( uxSlot = 0U; uxSlot < ( UBaseType_t ) configEDF_MAX_TASKS; uxSlot++ )
+                    {
+                        if( xEDFAdmittedTasks[ uxSlot ].xValid == pdFALSE )
+                        {
+                            xEDFAdmittedTasks[ uxSlot ].xPeriod          = xPeriod;
+                            xEDFAdmittedTasks[ uxSlot ].xDeadline         = xDeadline;
+                            xEDFAdmittedTasks[ uxSlot ].xComputationTime  = xComputationTime;
+                            xEDFAdmittedTasks[ uxSlot ].xMaxBlockingTime  = xBlockingTime;
+                            xEDFAdmittedTasks[ uxSlot ].xValid            = pdTRUE;
+                            uxEDFAdmittedTaskCount++;
+                            break;
+                        }
+                    }
+                }
+                taskEXIT_CRITICAL();
+
+                #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+                {
+                    printf( "[EDF] ADMIT | task=%-16s | period=%lu deadline=%lu wcet=%lu\r\n",
+                            pcName,
+                            ( unsigned long ) xPeriod,
+                            ( unsigned long ) xDeadline,
+                            ( unsigned long ) xComputationTime );
+                }
+                #endif
+
+                if( pxCreatedTask != NULL )
+                {
+                    *pxCreatedTask = xHandle;
+                }
+            }
+            else
+            {
+                xReturn = pdFAIL;
+            }
         }
+        #endif /* configPARTITIONED_EDF_ENABLE */
 
         // vTaskGPIOSet( xHandle, uxGPIO );
         return xReturn;
@@ -3462,7 +3923,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
              * suspended list. */
             if( uxListRemove( &( pxTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
             {
-                /* Only reset the priority-array bitmap for non-EDF tasks. */
+                /* only reset priority bitmap for non-EDF tasks */
                 #if ( configUSE_EDF_SCHEDULER == 1 )
                 {
                     if( pxTCB->xTaskIsEDF == pdFALSE )
@@ -5126,9 +5587,7 @@ BaseType_t xTaskIncrementTick( void )
                         mtCOVERAGE_TEST_MARKER();
                     }
 
-                    /* If this is an EDF task, recompute the new job's absolute
-                     * deadline before inserting into xEDFReadyTasksList so that
-                     * vListInsert() uses the fresh xJobDeadline as xItemValue. */
+                    /* for EDF tasks, refresh the absolute deadline before re-inserting */
                     #if ( configUSE_EDF_SCHEDULER == 1 )
                     {
                         if( pxTCB->xTaskIsEDF == pdTRUE )
@@ -5149,18 +5608,14 @@ BaseType_t xTaskIncrementTick( void )
                         #if ( configNUMBER_OF_CORES == 1 )
                         {
                             #if ( configUSE_EDF_SCHEDULER == 1 )
-                                /* An unblocked EDF task always triggers a
-                                 * reschedule so taskSELECT_HIGHEST_PRIORITY_TASK
-                                 * can pick the one with the earliest deadline. */
+                                /* EDF task unblocked, always reschedule */
                                 if( pxTCB->xTaskIsEDF == pdTRUE )
                                 {
                                     xSwitchRequired = pdTRUE;
                                 }
                                 else
                             #endif /* configUSE_EDF_SCHEDULER */
-                                /* Non-EDF path: only switch if the unblocked
-                                 * task has strictly higher priority than the
-                                 * currently running task. */
+                                /* non-EDF: only switch if higher priority */
                                 if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
                                 {
                                     xSwitchRequired = pdTRUE;
@@ -5181,7 +5636,7 @@ BaseType_t xTaskIncrementTick( void )
             }
         }
 
-        /* Check whether the currently running EDF task has missed its deadline. */
+        /* check for EDF deadline misses */
         #if ( configUSE_EDF_SCHEDULER == 1 )
         {
             prvEDFCheckDeadlineMiss( xConstTickCount );
@@ -6437,14 +6892,168 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 #endif /* portUSING_MPU_WRAPPERS */
 /*-----------------------------------------------------------*/
 
-/* EDF Scheduler Implementation */
+/* EDF scheduler implementation */
 #if ( configUSE_EDF_SCHEDULER == 1 )
+
+/*-----------------------------------------------------------*/
+/* SRP ceiling stack push/pop */
+#if ( configUSE_SRP == 1 )
+
+    void vSRPPushCeiling( TickType_t xCeiling )
+    {
+        configASSERT( uxSRPCeilingStackTop < ( UBaseType_t ) configSRP_MAX_CEILING_DEPTH );
+
+        xSRPCeilingStack[ uxSRPCeilingStackTop ].xCeiling = xCeiling;
+        xSRPCeilingStack[ uxSRPCeilingStackTop ].pxOwner  = pxCurrentTCB;
+        uxSRPCeilingStackTop++;
+
+        /* update current ceiling if this one is tighter */
+        if( xCeiling < xSRPCurrentCeiling )
+        {
+            xSRPCurrentCeiling = xCeiling;
+        }
+
+        /* log the lock */
+        #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+        {
+            UBaseType_t uxNext = ( uxSRPEventLogHead + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+
+            if( uxNext != uxSRPEventLogTail )
+            {
+                UBaseType_t uxIdx = uxSRPEventLogHead % srpEVENT_LOG_SIZE;
+                strncpy( ( char * ) xSRPEventLog[ uxIdx ].cName,
+                         pxCurrentTCB->pcTaskName,
+                         configMAX_TASK_NAME_LEN - 1 );
+                ( ( char * ) xSRPEventLog[ uxIdx ].cName )[ configMAX_TASK_NAME_LEN - 1 ] = '\0';
+                xSRPEventLog[ uxIdx ].xTick    = xTickCount;
+                xSRPEventLog[ uxIdx ].xCeiling = xCeiling;
+                xSRPEventLog[ uxIdx ].ucEvent  = ( uint8_t ) 'L';
+                uxSRPEventLogHead = uxNext;
+            }
+        }
+        #endif
+    }
+
+    void vSRPPopCeiling( void )
+    {
+        TickType_t xPoppedCeiling;
+
+        configASSERT( uxSRPCeilingStackTop > ( UBaseType_t ) 0U );
+
+        xPoppedCeiling = xSRPCeilingStack[ uxSRPCeilingStackTop - 1U ].xCeiling;
+        uxSRPCeilingStackTop--;
+
+        /* recalculate ceiling from remaining stack entries */
+        xSRPCurrentCeiling = portMAX_DELAY;
+
+        for( UBaseType_t ux = ( UBaseType_t ) 0U; ux < uxSRPCeilingStackTop; ux++ )
+        {
+            if( xSRPCeilingStack[ ux ].xCeiling < xSRPCurrentCeiling )
+            {
+                xSRPCurrentCeiling = xSRPCeilingStack[ ux ].xCeiling;
+            }
+        }
+
+        /* log the unlock */
+        #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
+        {
+            UBaseType_t uxNext = ( uxSRPEventLogHead + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+
+            if( uxNext != uxSRPEventLogTail )
+            {
+                UBaseType_t uxIdx = uxSRPEventLogHead % srpEVENT_LOG_SIZE;
+                strncpy( ( char * ) xSRPEventLog[ uxIdx ].cName,
+                         pxCurrentTCB->pcTaskName,
+                         configMAX_TASK_NAME_LEN - 1 );
+                ( ( char * ) xSRPEventLog[ uxIdx ].cName )[ configMAX_TASK_NAME_LEN - 1 ] = '\0';
+                xSRPEventLog[ uxIdx ].xTick    = xTickCount;
+                xSRPEventLog[ uxIdx ].xCeiling = xPoppedCeiling;
+                xSRPEventLog[ uxIdx ].ucEvent  = ( uint8_t ) 'U';
+                uxSRPEventLogHead = uxNext;
+            }
+        }
+        #endif
+    }
+
+    /* for testing */
+    TickType_t xSRPGetCurrentCeiling( void )
+    {
+        return xSRPCurrentCeiling;
+    }
+
+    /* for testing */
+    UBaseType_t uxSRPGetCeilingStackDepth( void )
+    {
+        return uxSRPCeilingStackTop;
+    }
+
+#endif /* configUSE_SRP */
+
+#if ( configUSE_EDF_SCHEDULER == 1 )
+    /* for testing */
+    UBaseType_t uxEDFGetAdmittedCount( void )
+    {
+        #if ( configPARTITIONED_EDF_ENABLE == 1 )
+        {
+            UBaseType_t uxTotal = 0U;
+            BaseType_t xCore;
+
+            for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
+            {
+                uxTotal += uxEDFAdmittedTaskCount[ xCore ];
+            }
+
+            return uxTotal;
+        }
+        #else
+            return uxEDFAdmittedTaskCount;
+        #endif
+    }
+
+    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+        void vTaskEDFSetCore( TaskHandle_t xTask, BaseType_t xCoreID )
+        {
+            vTaskCoreAffinitySet( xTask, ( UBaseType_t ) 1U << ( UBaseType_t ) xCoreID );
+        }
+
+        void vTaskEDFClearCore( TaskHandle_t xTask )
+        {
+            vTaskCoreAffinitySet( xTask, tskNO_AFFINITY );
+        }
+    #endif /* configNUMBER_OF_CORES > 1 && configUSE_CORE_AFFINITY */
+#endif /* configUSE_EDF_SCHEDULER */
+/*-----------------------------------------------------------*/
 
 static void prvEDFAddToReadyList( TCB_t * pxTCB )
 {
     listSET_LIST_ITEM_VALUE( &( pxTCB->xStateListItem ), pxTCB->xJobDeadline );
-    vListInsert( &xEDFReadyTasksList, &( pxTCB->xStateListItem ) );
+    #if ( configPARTITIONED_EDF_ENABLE == 1 )
+    {
+        /* Derive the pinned core from the task's affinity mask. */
+        UBaseType_t uxMask = pxTCB->uxCoreAffinityMask;
+        BaseType_t xCore = ( BaseType_t ) 0;
+
+        while( ( ( uxMask & ( UBaseType_t ) 1U ) == ( UBaseType_t ) 0U ) &&
+               ( xCore < ( BaseType_t ) configNUMBER_OF_CORES - 1 ) )
+        {
+            uxMask >>= 1U;
+            xCore++;
+        }
+
+        vListInsert( &xEDFReadyTasksList[ xCore ], &( pxTCB->xStateListItem ) );
+    }
+    #else
+        vListInsert( &xEDFReadyTasksList, &( pxTCB->xStateListItem ) );
+    #endif
 }
+
+#if ( configPARTITIONED_EDF_ENABLE == 1 )
+    static void prvEDFAddToReadyListPartitioned( TCB_t * pxTCB, BaseType_t xCoreID )
+    {
+        listSET_LIST_ITEM_VALUE( &( pxTCB->xStateListItem ), pxTCB->xJobDeadline );
+        vListInsert( &xEDFReadyTasksList[ xCoreID ], &( pxTCB->xStateListItem ) );
+    }
+#endif /* configPARTITIONED_EDF_ENABLE */
 
 #if ( configUSE_CBS_SERVER == 1 )
 
@@ -6492,18 +7101,26 @@ static void prvEDFUpdateJobOnUnblock( TCB_t * pxTCB )
 
 static void prvEDFCheckDeadlineMiss( TickType_t xCurrentTick )
 {
-    if( pxCurrentTCB == NULL )
+    #if ( configNUMBER_OF_CORES > 1 )
+        BaseType_t xCore;
+        for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
+        {
+            TCB_t * pxRunning = pxCurrentTCBs[ xCore ];
+    #else
+            TCB_t * pxRunning = pxCurrentTCB;
+    #endif
+
+    if( ( pxRunning == NULL ) || ( pxRunning->xTaskIsEDF != pdTRUE ) )
     {
-        return;
+        #if ( configNUMBER_OF_CORES > 1 )
+            continue;
+        #else
+            return;
+        #endif
     }
 
-    if( pxCurrentTCB->xTaskIsEDF != pdTRUE )
-    {
-        return;
-    }
-
-    /* Use signed comparison to handle tick wrap correctly for short runs. */
-    if( ( int32_t ) ( xCurrentTick - pxCurrentTCB->xJobDeadline ) > 0 )
+    /* signed compare handles tick wrap */
+    if( ( int32_t ) ( xCurrentTick - pxRunning->xJobDeadline ) > 0 )
     {
         #if ( configEDF_ENABLE_DEBUG_LOG == 1 )
         {
@@ -6512,23 +7129,29 @@ static void prvEDFCheckDeadlineMiss( TickType_t xCurrentTick )
 
             for( uxChar = 0U; uxChar < ( UBaseType_t ) configMAX_TASK_NAME_LEN; uxChar++ )
             {
-                xEDFMissLog[ uxIdx ].cName[ uxChar ] = pxCurrentTCB->pcTaskName[ uxChar ];
+                xEDFMissLog[ uxIdx ].cName[ uxChar ] = pxRunning->pcTaskName[ uxChar ];
 
-                if( pxCurrentTCB->pcTaskName[ uxChar ] == '\0' )
+                if( pxRunning->pcTaskName[ uxChar ] == '\0' )
                 {
                     break;
                 }
             }
 
             xEDFMissLog[ uxIdx ].xTick     = xCurrentTick;
-            xEDFMissLog[ uxIdx ].xDeadline = pxCurrentTCB->xJobDeadline;
-
-            /* Single-core: no atomic needed — ISR cannot preempt itself. */
+            xEDFMissLog[ uxIdx ].xDeadline = pxRunning->xJobDeadline;
             uxEDFMissLogHead = ( uxEDFMissLogHead + 1U ) % ( edfMISS_LOG_SIZE * 2U );
         }
         #endif /* configEDF_ENABLE_DEBUG_LOG */
     }
+
+    #if ( configNUMBER_OF_CORES > 1 )
+        }
+    #endif
 }
+
+#define LL_SCALE    ( ( uint64_t ) 10000ULL ) /* 1.0 = 10000, gives 0.01% resolution */
+
+#if ( configGLOBAL_EDF_ENABLE == 1 )
 
 static BaseType_t prvIsImplicitDeadlineSet( void )
 {
@@ -6549,48 +7172,60 @@ static BaseType_t prvIsImplicitDeadlineSet( void )
 }
 
 static BaseType_t prvEDFAdmissionControlLL( TickType_t xNewPeriod,
-                                            TickType_t xNewComputationTime )
+                                            TickType_t xNewComputationTime,
+                                            TickType_t xNewBlockingTime )
 {
-    uint64_t ullNum = 0ULL;
-    uint64_t ullDen = 1ULL;
+    /* LL bound: U = sum(C_i / T_i) in fixed-point (scale 10000).
+     * also checks C_i + B_i <= D_i for SRP feasibility. */
+    #define LL_SCALE  ( ( uint64_t ) 10000ULL )  /* 1.0 = 10000 */
+
+    uint64_t ullUtilSum = 0ULL;
     UBaseType_t uxIdx;
 
     for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
     {
         if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
         {
-            uint64_t ullTi = ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xPeriod;
-            uint64_t ullCi = ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xComputationTime;
+            ullUtilSum += ( ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xComputationTime * LL_SCALE )
+                          / ( uint64_t ) xEDFAdmittedTasks[ uxIdx ].xPeriod;
 
-            /* num/den += Ci/Ti  =>  num = num*Ti + Ci*den; den = den*Ti */
-            ullNum = ullNum * ullTi + ullCi * ullDen;
-            ullDen = ullDen * ullTi;
-
-            /* Early exit if already over-utilised. */
-            if( ullNum >= ullDen )
+            /* SRP check: C_i + B_i must fit within D_i */
+            if( ( xEDFAdmittedTasks[ uxIdx ].xComputationTime +
+                  xEDFAdmittedTasks[ uxIdx ].xMaxBlockingTime ) >
+                xEDFAdmittedTasks[ uxIdx ].xPeriod )
             {
                 return pdFAIL;
             }
         }
     }
 
-    /* Add new task. */
-    ullNum = ullNum * ( uint64_t ) xNewPeriod + ( uint64_t ) xNewComputationTime * ullDen;
-    ullDen = ullDen * ( uint64_t ) xNewPeriod;
+    /* add the new task's utilization */
+    ullUtilSum += ( ( uint64_t ) xNewComputationTime * LL_SCALE )
+                  / ( uint64_t ) xNewPeriod;
 
-    return ( ullNum <= ullDen ) ? pdPASS : pdFAIL;
+    if( ( xNewComputationTime + xNewBlockingTime ) > xNewPeriod )
+    {
+        return pdFAIL;
+    }
+
+    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configGLOBAL_EDF_ENABLE == 1 ) )
+        return ( ullUtilSum <= ( LL_SCALE * ( uint64_t ) configNUMBER_OF_CORES ) ) ? pdPASS : pdFAIL;
+    #else
+        return ( ullUtilSum <= LL_SCALE ) ? pdPASS : pdFAIL;
+    #endif
 }
 
 static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
                                                 TickType_t xNewDeadline,
-                                                TickType_t xNewComputationTime )
+                                                TickType_t xNewComputationTime,
+                                                TickType_t xNewBlockingTime )
 {
     static TickType_t xSchedPoints[ configEDF_MAX_SCHEDULING_POINTS ];
     UBaseType_t uxPtCount = 0U;
     UBaseType_t uxIdx, uxPtIdx, uxTaskIdx;
     TickType_t xTmax = 0U;
 
-    /* ---- Compute xTmax = max relative deadline across admitted + new task ---- */
+    /* find the largest relative deadline */
     for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
     {
         if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
@@ -6607,10 +7242,10 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
         xTmax = xNewDeadline;
     }
 
-    /* Upper bound for scheduling point generation: 2 * xTmax */
+    /* upper bound for scheduling points: 2 * xTmax */
     TickType_t xBound = xTmax * ( TickType_t ) 2U;
 
-    /* ---- Generate scheduling points t = n*T_i + D_i for each admitted task ---- */
+    /* generate scheduling points t = n*T_i + D_i */
     for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS && uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS; uxIdx++ )
     {
         if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
@@ -6629,7 +7264,7 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
         }
     }
 
-    /* Add scheduling points for the new task. */
+    /* scheduling points for the new task */
     {
         uint32_t n = 0U;
         TickType_t xPt = xNewDeadline;
@@ -6644,10 +7279,10 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
 
     if( uxPtCount == 0U )
     {
-        return pdPASS; /* No scheduling points to check — trivially schedulable. */
+        return pdPASS; /* no points to check, trivially schedulable */
     }
 
-    /* ---- Insertion sort scheduling points ascending (uxPtCount is small) ---- */
+    /* sort scheduling points ascending */
     for( uxIdx = 1U; uxIdx < uxPtCount; uxIdx++ )
     {
         TickType_t xKey = xSchedPoints[ uxIdx ];
@@ -6662,13 +7297,12 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
         xSchedPoints[ uxJ ] = xKey;
     }
 
-    /* ---- Evaluate h(t) <= t at each scheduling point ---- */
-    /* h(t) = sum over all tasks i of: floor((t + T_i - D_i) / T_i) * C_i */
+    /* check h(t) <= t at each scheduling point */
     for( uxPtIdx = 0U; uxPtIdx < uxPtCount; uxPtIdx++ )
     {
         TickType_t xT = xSchedPoints[ uxPtIdx ];
 
-        /* Skip duplicate points. */
+        /* skip duplicates */
         if( ( uxPtIdx > 0U ) && ( xSchedPoints[ uxPtIdx ] == xSchedPoints[ uxPtIdx - 1U ] ) )
         {
             continue;
@@ -6676,7 +7310,7 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
 
         uint64_t ullHt = 0ULL;
 
-        /* Sum demand from admitted tasks. */
+        /* sum demand from existing tasks */
         for( uxTaskIdx = 0U; uxTaskIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxTaskIdx++ )
         {
             if( xEDFAdmittedTasks[ uxTaskIdx ].xValid == pdTRUE )
@@ -6685,7 +7319,7 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
                 TickType_t xDj = xEDFAdmittedTasks[ uxTaskIdx ].xDeadline;
                 TickType_t xCj = xEDFAdmittedTasks[ uxTaskIdx ].xComputationTime;
 
-                if( xT + xTj >= xDj ) /* at least one deadline before or at t */
+                if( xT + xTj >= xDj ) /* at least one job deadline before t */
                 {
                     uint64_t ullNj = ( uint64_t ) ( xT + xTj - xDj ) / ( uint64_t ) xTj;
                     ullHt += ullNj * ( uint64_t ) xCj;
@@ -6693,16 +7327,38 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
             }
         }
 
-        /* Add demand from new task. */
+        /* add new task's demand */
         if( xT + xNewPeriod >= xNewDeadline )
         {
             uint64_t ullNnew = ( uint64_t ) ( xT + xNewPeriod - xNewDeadline ) / ( uint64_t ) xNewPeriod;
             ullHt += ullNnew * ( uint64_t ) xNewComputationTime;
         }
 
+        /* SRP: add worst-case blocking to demand */
+        {
+            TickType_t xMaxB = 0U;
+
+            for( uxTaskIdx = 0U; uxTaskIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxTaskIdx++ )
+            {
+                if( ( xEDFAdmittedTasks[ uxTaskIdx ].xValid == pdTRUE ) &&
+                    ( xEDFAdmittedTasks[ uxTaskIdx ].xDeadline <= xT ) &&
+                    ( xEDFAdmittedTasks[ uxTaskIdx ].xMaxBlockingTime > xMaxB ) )
+                {
+                    xMaxB = xEDFAdmittedTasks[ uxTaskIdx ].xMaxBlockingTime;
+                }
+            }
+
+            if( ( xNewDeadline <= xT ) && ( xNewBlockingTime > xMaxB ) )
+            {
+                xMaxB = xNewBlockingTime;
+            }
+
+            ullHt += ( uint64_t ) xMaxB;
+        }
+
         if( ullHt == 0ULL )
         {
-            return pdPASS; /* No demand at this point — all future points also 0. */
+            return pdPASS; /* zero demand here, pass */
         }
 
         if( ullHt > ( uint64_t ) xT )
@@ -6711,17 +7367,18 @@ static BaseType_t prvEDFAdmissionControlDemand( TickType_t xNewPeriod,
         }
     }
 
-    /* Passed all checked points (or cap reached without failure — conservative pdFAIL). */
+    /* passed all points, or hit the cap (conservative fail) */
     return ( uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS ) ? pdPASS : pdFAIL;
 }
 
 static BaseType_t prvEDFAdmissionControl( TickType_t xPeriod,
                                           TickType_t xDeadline,
-                                          TickType_t xComputationTime )
+                                          TickType_t xComputationTime,
+                                          TickType_t xBlockingTime )
 {
     BaseType_t xResult;
 
-    /* Validate parameters. */
+    /* basic param checks */
     if( ( xPeriod == 0U ) || ( xComputationTime == 0U ) || ( xDeadline == 0U ) || ( xDeadline > xPeriod ) )
     {
         return pdFAIL;
@@ -6732,36 +7389,300 @@ static BaseType_t prvEDFAdmissionControl( TickType_t xPeriod,
         return pdFAIL;
     }
 
-    /* Use LL bound only when all tasks (existing + new) are implicit-deadline. */
+    /* use LL bound if all tasks are implicit-deadline, otherwise demand bound */
     if( ( prvIsImplicitDeadlineSet() == pdTRUE ) && ( xDeadline == xPeriod ) )
     {
-        xResult = prvEDFAdmissionControlLL( xPeriod, xComputationTime );
+        xResult = prvEDFAdmissionControlLL( xPeriod, xComputationTime, xBlockingTime );
     }
     else
     {
-        xResult = prvEDFAdmissionControlDemand( xPeriod, xDeadline, xComputationTime );
+        xResult = prvEDFAdmissionControlDemand( xPeriod, xDeadline, xComputationTime, xBlockingTime );
     }
 
     return xResult;
 }
 
+#endif /* configGLOBAL_EDF_ENABLE */
+
+#if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
+
+    static BaseType_t prvIsImplicitDeadlineSetOnCore( BaseType_t xCoreID )
+    {
+        UBaseType_t uxIdx;
+
+        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+        {
+            if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xValid == pdTRUE )
+            {
+                if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xDeadline !=
+                    xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xPeriod )
+                {
+                    return pdFALSE;
+                }
+            }
+        }
+
+        return pdTRUE;
+    }
+
+    static BaseType_t prvEDFAdmissionControlLLPartitioned( BaseType_t xCoreID,
+                                                           TickType_t xNewPeriod,
+                                                           TickType_t xNewComputationTime,
+                                                           TickType_t xNewBlockingTime )
+    {
+        uint64_t ullUtilSum = 0ULL;
+        UBaseType_t uxIdx;
+
+        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+        {
+            if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xValid == pdTRUE )
+            {
+                ullUtilSum += ( ( uint64_t ) xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xComputationTime * LL_SCALE )
+                              / ( uint64_t ) xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xPeriod;
+
+                if( ( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xComputationTime +
+                      xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xMaxBlockingTime ) >
+                    xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xPeriod )
+                {
+                    return pdFAIL;
+                }
+            }
+        }
+
+        ullUtilSum += ( ( uint64_t ) xNewComputationTime * LL_SCALE ) / ( uint64_t ) xNewPeriod;
+
+        if( ( xNewComputationTime + xNewBlockingTime ) > xNewPeriod )
+        {
+            return pdFAIL;
+        }
+
+        /* Per-core bound: utilization <= 1.0 */
+        return ( ullUtilSum <= LL_SCALE ) ? pdPASS : pdFAIL;
+    }
+
+    static BaseType_t prvEDFAdmissionControlDemandPartitioned( BaseType_t xCoreID,
+                                                               TickType_t xNewPeriod,
+                                                               TickType_t xNewDeadline,
+                                                               TickType_t xNewComputationTime,
+                                                               TickType_t xNewBlockingTime )
+    {
+        static TickType_t xSchedPoints[ configEDF_MAX_SCHEDULING_POINTS ];
+        UBaseType_t uxPtCount = 0U;
+        UBaseType_t uxIdx, uxPtIdx, uxTaskIdx;
+        TickType_t xTmax = 0U;
+
+        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+        {
+            if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xValid == pdTRUE )
+            {
+                if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xDeadline > xTmax )
+                {
+                    xTmax = xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xDeadline;
+                }
+            }
+        }
+
+        if( xNewDeadline > xTmax )
+        {
+            xTmax = xNewDeadline;
+        }
+
+        TickType_t xBound = xTmax * ( TickType_t ) 2U;
+
+        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS && uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS; uxIdx++ )
+        {
+            if( xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xValid == pdTRUE )
+            {
+                TickType_t xT = xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xPeriod;
+                TickType_t xD = xEDFAdmittedTasks[ xCoreID ][ uxIdx ].xDeadline;
+                uint32_t n = 0U;
+                TickType_t xPt = xD;
+
+                while( ( xPt <= xBound ) && ( uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS ) )
+                {
+                    xSchedPoints[ uxPtCount++ ] = xPt;
+                    n++;
+                    xPt = ( TickType_t ) n * xT + xD;
+                }
+            }
+        }
+
+        {
+            uint32_t n = 0U;
+            TickType_t xPt = xNewDeadline;
+
+            while( ( xPt <= xBound ) && ( uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS ) )
+            {
+                xSchedPoints[ uxPtCount++ ] = xPt;
+                n++;
+                xPt = ( TickType_t ) n * xNewPeriod + xNewDeadline;
+            }
+        }
+
+        if( uxPtCount == 0U )
+        {
+            return pdPASS;
+        }
+
+        for( uxIdx = 1U; uxIdx < uxPtCount; uxIdx++ )
+        {
+            TickType_t xKey = xSchedPoints[ uxIdx ];
+            UBaseType_t uxJ = uxIdx;
+
+            while( ( uxJ > 0U ) && ( xSchedPoints[ uxJ - 1U ] > xKey ) )
+            {
+                xSchedPoints[ uxJ ] = xSchedPoints[ uxJ - 1U ];
+                uxJ--;
+            }
+
+            xSchedPoints[ uxJ ] = xKey;
+        }
+
+        for( uxPtIdx = 0U; uxPtIdx < uxPtCount; uxPtIdx++ )
+        {
+            TickType_t xT = xSchedPoints[ uxPtIdx ];
+
+            if( ( uxPtIdx > 0U ) && ( xSchedPoints[ uxPtIdx ] == xSchedPoints[ uxPtIdx - 1U ] ) )
+            {
+                continue;
+            }
+
+            uint64_t ullHt = 0ULL;
+
+            for( uxTaskIdx = 0U; uxTaskIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxTaskIdx++ )
+            {
+                if( xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xValid == pdTRUE )
+                {
+                    TickType_t xTj = xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xPeriod;
+                    TickType_t xDj = xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xDeadline;
+                    TickType_t xCj = xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xComputationTime;
+
+                    if( xT + xTj >= xDj )
+                    {
+                        uint64_t ullNj = ( uint64_t ) ( xT + xTj - xDj ) / ( uint64_t ) xTj;
+                        ullHt += ullNj * ( uint64_t ) xCj;
+                    }
+                }
+            }
+
+            if( xT + xNewPeriod >= xNewDeadline )
+            {
+                uint64_t ullNnew = ( uint64_t ) ( xT + xNewPeriod - xNewDeadline ) / ( uint64_t ) xNewPeriod;
+                ullHt += ullNnew * ( uint64_t ) xNewComputationTime;
+            }
+
+            {
+                TickType_t xMaxB = 0U;
+
+                for( uxTaskIdx = 0U; uxTaskIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxTaskIdx++ )
+                {
+                    if( ( xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xValid == pdTRUE ) &&
+                        ( xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xDeadline <= xT ) &&
+                        ( xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xMaxBlockingTime > xMaxB ) )
+                    {
+                        xMaxB = xEDFAdmittedTasks[ xCoreID ][ uxTaskIdx ].xMaxBlockingTime;
+                    }
+                }
+
+                if( ( xNewDeadline <= xT ) && ( xNewBlockingTime > xMaxB ) )
+                {
+                    xMaxB = xNewBlockingTime;
+                }
+
+                ullHt += ( uint64_t ) xMaxB;
+            }
+
+            if( ullHt == 0ULL )
+            {
+                return pdPASS;
+            }
+
+            if( ullHt > ( uint64_t ) xT )
+            {
+                return pdFAIL;
+            }
+        }
+
+        return ( uxPtCount < ( UBaseType_t ) configEDF_MAX_SCHEDULING_POINTS ) ? pdPASS : pdFAIL;
+    }
+
+    static BaseType_t prvEDFAdmissionControlPartitioned( TickType_t xPeriod,
+                                                         TickType_t xDeadline,
+                                                         TickType_t xComputationTime,
+                                                         TickType_t xBlockingTime,
+                                                         BaseType_t xCoreID )
+    {
+        if( ( xPeriod == 0U ) || ( xComputationTime == 0U ) || ( xDeadline == 0U ) || ( xDeadline > xPeriod ) )
+        {
+            return pdFAIL;
+        }
+
+        if( uxEDFAdmittedTaskCount[ xCoreID ] >= ( UBaseType_t ) configEDF_MAX_TASKS )
+        {
+            return pdFAIL;
+        }
+
+        if( ( prvIsImplicitDeadlineSetOnCore( xCoreID ) == pdTRUE ) && ( xDeadline == xPeriod ) )
+        {
+            return prvEDFAdmissionControlLLPartitioned( xCoreID, xPeriod, xComputationTime, xBlockingTime );
+        }
+        else
+        {
+            return prvEDFAdmissionControlDemandPartitioned( xCoreID, xPeriod, xDeadline, xComputationTime, xBlockingTime );
+        }
+    }
+
+#endif /* configPARTITIONED_EDF_ENABLE */
+
 void vEDFPrintStats( void )
 {
     UBaseType_t uxIdx;
 
-    printf( "[EDF] Admitted task set (%u tasks):\r\n", ( unsigned int ) uxEDFAdmittedTaskCount );
-
-    for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+    #if ( configPARTITIONED_EDF_ENABLE == 1 )
     {
-        if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
+        BaseType_t xCore;
+        UBaseType_t uxTotal = 0U;
+
+        for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
         {
-            printf( "[EDF]   slot=%u period=%lu deadline=%lu wcet=%lu\r\n",
-                    ( unsigned int ) uxIdx,
-                    ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xPeriod,
-                    ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xDeadline,
-                    ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xComputationTime );
+            uxTotal += uxEDFAdmittedTaskCount[ xCore ];
+        }
+
+        printf( "[EDF] Admitted task set (%u tasks):\r\n", ( unsigned int ) uxTotal );
+
+        for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
+        {
+            for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+            {
+                if( xEDFAdmittedTasks[ xCore ][ uxIdx ].xValid == pdTRUE )
+                {
+                    printf( "[EDF]   core=%ld slot=%u period=%lu deadline=%lu wcet=%lu\r\n",
+                            ( long ) xCore,
+                            ( unsigned int ) uxIdx,
+                            ( unsigned long ) xEDFAdmittedTasks[ xCore ][ uxIdx ].xPeriod,
+                            ( unsigned long ) xEDFAdmittedTasks[ xCore ][ uxIdx ].xDeadline,
+                            ( unsigned long ) xEDFAdmittedTasks[ xCore ][ uxIdx ].xComputationTime );
+                }
+            }
         }
     }
+    #else /* configGLOBAL_EDF_ENABLE */
+    {
+        printf( "[EDF] Admitted task set (%u tasks):\r\n", ( unsigned int ) uxEDFAdmittedTaskCount );
+
+        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+        {
+            if( xEDFAdmittedTasks[ uxIdx ].xValid == pdTRUE )
+            {
+                printf( "[EDF]   slot=%u period=%lu deadline=%lu wcet=%lu\r\n",
+                        ( unsigned int ) uxIdx,
+                        ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xPeriod,
+                        ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xDeadline,
+                        ( unsigned long ) xEDFAdmittedTasks[ uxIdx ].xComputationTime );
+            }
+        }
+    }
+    #endif /* configPARTITIONED_EDF_ENABLE */
 }
 
 void vEDFDrainMissLog( void )
@@ -6787,14 +7708,104 @@ void vEDFDrainSwitchLog( void )
     {
         UBaseType_t uxIdx = uxEDFSwitchLogTail % edfSWITCH_LOG_SIZE;
 
-        printf( "[S]%lu %s %lu\r\n",
-                ( unsigned long ) xEDFSwitchLog[ uxIdx ].xTick,
-                ( const char * ) xEDFSwitchLog[ uxIdx ].cName,
-                ( unsigned long ) xEDFSwitchLog[ uxIdx ].xDeadline );
+        #if ( configNUMBER_OF_CORES > 1 )
+            printf( "[S]%lu C%ld %s %lu\r\n",
+                    ( unsigned long ) xEDFSwitchLog[ uxIdx ].xTick,
+                    ( long ) xEDFSwitchLog[ uxIdx ].xCoreID,
+                    ( const char * ) xEDFSwitchLog[ uxIdx ].cName,
+                    ( unsigned long ) xEDFSwitchLog[ uxIdx ].xDeadline );
+        #else
+            printf( "[S]%lu %s %lu\r\n",
+                    ( unsigned long ) xEDFSwitchLog[ uxIdx ].xTick,
+                    ( const char * ) xEDFSwitchLog[ uxIdx ].cName,
+                    ( unsigned long ) xEDFSwitchLog[ uxIdx ].xDeadline );
+        #endif
 
         uxEDFSwitchLogTail = ( uxEDFSwitchLogTail + 1U ) % ( edfSWITCH_LOG_SIZE * 2U );
     }
 }
+
+#if ( configUSE_SRP == 1 )
+/* dump SRP event log over UART */
+void vSRPDrainEventLog( void )
+{
+    while( uxSRPEventLogTail != uxSRPEventLogHead )
+    {
+        UBaseType_t uxIdx = uxSRPEventLogTail % srpEVENT_LOG_SIZE;
+
+        printf( "[SRP] %c | task=%-16s | tick=%lu | ceiling=%lu\r\n",
+                ( char ) xSRPEventLog[ uxIdx ].ucEvent,
+                ( const char * ) xSRPEventLog[ uxIdx ].cName,
+                ( unsigned long ) xSRPEventLog[ uxIdx ].xTick,
+                ( unsigned long ) xSRPEventLog[ uxIdx ].xCeiling );
+
+        uxSRPEventLogTail = ( uxSRPEventLogTail + 1U ) % ( srpEVENT_LOG_SIZE * 2U );
+    }
+}
+#endif /* configUSE_SRP */
+
+/*-----------------------------------------------------------*/
+/* shared-stack group dispatcher for SRP stack sharing */
+/*-----------------------------------------------------------*/
+#if ( configUSE_SRP == 1 )
+
+    typedef struct
+    {
+        TaskFunction_t pxJobFunction;
+        UBaseType_t    uxJobCount;
+    } EDFSharedGroupContext_t;
+
+    static void prvEDFSharedGroupDispatcher( void * pvParameters )
+    {
+        EDFSharedGroupContext_t * pxCtx = ( EDFSharedGroupContext_t * ) pvParameters;
+        TickType_t xLWT = 0;
+
+        for( ;; )
+        {
+            UBaseType_t ux;
+
+            for( ux = 0U; ux < pxCtx->uxJobCount; ux++ )
+            {
+                pxCtx->pxJobFunction( NULL );
+            }
+
+            vTaskDelayEDF( &xLWT );
+        }
+    }
+
+    BaseType_t xTaskCreateEDFSharedGroup( TaskFunction_t pxJobFunction,
+                                          const char * const pcGroupName,
+                                          const configSTACK_DEPTH_TYPE uxStackDepth,
+                                          UBaseType_t uxJobCount,
+                                          UBaseType_t uxPriority,
+                                          TickType_t xPeriod,
+                                          TickType_t xDeadline,
+                                          TickType_t xWCETPerJob,
+                                          TickType_t xBlockingTime,
+                                          TaskHandle_t * const pxCreatedTask )
+    {
+        EDFSharedGroupContext_t * pxCtx;
+        TickType_t xTotalWCET;
+
+        pxCtx = ( EDFSharedGroupContext_t * ) pvPortMalloc( sizeof( EDFSharedGroupContext_t ) );
+
+        if( pxCtx == NULL )
+        {
+            return pdFAIL;
+        }
+
+        pxCtx->pxJobFunction = pxJobFunction;
+        pxCtx->uxJobCount    = uxJobCount;
+
+        xTotalWCET = xWCETPerJob * ( TickType_t ) uxJobCount;
+
+        return xTaskCreateEDF( prvEDFSharedGroupDispatcher, pcGroupName,
+                               uxStackDepth, ( void * ) pxCtx, uxPriority,
+                               xPeriod, xDeadline, xTotalWCET, xBlockingTime,
+                               pxCreatedTask );
+    }
+
+#endif /* configUSE_SRP */
 
 void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
 {
@@ -6824,21 +7835,19 @@ void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime )
             }
         }
 
-        /* Always refresh the deadline, even if the task does not actually block. */
+        /* always refresh deadline, even if we don't actually block */
         *pxPreviousWakeTime            = xTimeToWake;
         pxCurrentTCB->xJobReleaseTime  = xTimeToWake;
         pxCurrentTCB->xJobDeadline     = xTimeToWake + pxCurrentTCB->xTaskDeadline;
 
         if( xShouldDelay != pdFALSE )
         {
-            /* Normal case, block until next period. */
+            /* normal case: block until next period */
             prvAddCurrentTaskToDelayedList( xTimeToWake - xConstTickCount, pdFALSE );
         }
         else
         {
-            /* Task finished at or after its period boundary — don't
-             * block, but still update its position in the EDF
-             * ready list so the sorted order reflects new deadline. */
+            /* finished past the period boundary — just re-sort in the EDF list */
             ( void ) uxListRemove( &( pxCurrentTCB->xStateListItem ) );
             prvEDFAddToReadyList( pxCurrentTCB );
         }
@@ -7107,16 +8116,34 @@ static void prvInitialiseTaskLists( void )
     #if ( configUSE_EDF_SCHEDULER == 1 )
     {
         UBaseType_t uxIdx;
-        vListInitialise( &xEDFReadyTasksList );
-        uxEDFAdmittedTaskCount = ( UBaseType_t ) 0U;
-        uxEDFMissLogHead       = ( UBaseType_t ) 0U;
-        uxEDFMissLogTail       = ( UBaseType_t ) 0U;
-        uxEDFSwitchLogHead     = ( UBaseType_t ) 0U;
-        uxEDFSwitchLogTail     = ( UBaseType_t ) 0U;
-        for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+        uxEDFMissLogHead   = ( UBaseType_t ) 0U;
+        uxEDFMissLogTail   = ( UBaseType_t ) 0U;
+        uxEDFSwitchLogHead = ( UBaseType_t ) 0U;
+        uxEDFSwitchLogTail = ( UBaseType_t ) 0U;
+
+        #if ( configPARTITIONED_EDF_ENABLE == 1 )
         {
-            xEDFAdmittedTasks[ uxIdx ].xValid = pdFALSE;
+            BaseType_t xCore;
+            for( xCore = 0; xCore < ( BaseType_t ) configNUMBER_OF_CORES; xCore++ )
+            {
+                vListInitialise( &xEDFReadyTasksList[ xCore ] );
+                uxEDFAdmittedTaskCount[ xCore ] = ( UBaseType_t ) 0U;
+                for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+                {
+                    xEDFAdmittedTasks[ xCore ][ uxIdx ].xValid = pdFALSE;
+                }
+            }
         }
+        #else /* configGLOBAL_EDF_ENABLE */
+        {
+            vListInitialise( &xEDFReadyTasksList );
+            uxEDFAdmittedTaskCount = ( UBaseType_t ) 0U;
+            for( uxIdx = 0U; uxIdx < ( UBaseType_t ) configEDF_MAX_TASKS; uxIdx++ )
+            {
+                xEDFAdmittedTasks[ uxIdx ].xValid = pdFALSE;
+            }
+        }
+        #endif
     }
     #endif /* configUSE_EDF_SCHEDULER */
 

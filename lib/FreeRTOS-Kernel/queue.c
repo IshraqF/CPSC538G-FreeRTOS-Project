@@ -133,6 +133,10 @@ typedef struct QueueDefinition /* The old naming convention is used to prevent b
         UBaseType_t uxQueueNumber;
         uint8_t ucQueueType;
     #endif
+
+    #if ( configUSE_SRP == 1 )
+        TickType_t xResourceCeiling; // min deadline among tasks using this resource, 0 = no SRP
+    #endif
 } xQUEUE;
 
 /* The old xQUEUE name is maintained above then typedefed to the new Queue_t
@@ -607,6 +611,12 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength,
         pxNewQueue->pxQueueSetContainer = NULL;
     }
     #endif /* configUSE_QUEUE_SETS */
+
+    #if ( configUSE_SRP == 1 )
+    {
+        pxNewQueue->xResourceCeiling = 0;
+    }
+    #endif /* configUSE_SRP */
 
     traceQUEUE_CREATE( pxNewQueue );
 }
@@ -1716,6 +1726,21 @@ BaseType_t xQueueSemaphoreTake( QueueHandle_t xQueue,
                 }
                 #endif /* configUSE_MUTEXES */
 
+                #if ( configUSE_SRP == 1 )
+                {
+                    /* push SRP ceiling */
+                    #if ( configUSE_MUTEXES == 1 )
+                    if( pxQueue->uxQueueType != queueQUEUE_IS_MUTEX )
+                    #endif
+                    {
+                        if( pxQueue->xResourceCeiling != ( TickType_t ) 0 )
+                        {
+                            vSRPPushCeiling( pxQueue->xResourceCeiling );
+                        }
+                    }
+                }
+                #endif /* configUSE_SRP */
+
                 /* Check to see if other tasks are blocked waiting to give the
                  * semaphore, and if so, unblock the highest priority such task. */
                 if( listLIST_IS_EMPTY( &( pxQueue->xTasksWaitingToSend ) ) == pdFALSE )
@@ -2254,6 +2279,20 @@ UBaseType_t uxQueueMessagesWaitingFromISR( const QueueHandle_t xQueue )
 }
 /*-----------------------------------------------------------*/
 
+/*-----------------------------------------------------------*/
+
+#if ( configUSE_SRP == 1 )
+    void vQueueSetResourceCeiling( QueueHandle_t xQueue,
+                                   TickType_t xCeiling )
+    {
+        Queue_t * const pxQueue = xQueue;
+
+        configASSERT( pxQueue != NULL );
+        pxQueue->xResourceCeiling = xCeiling;
+    }
+#endif /* configUSE_SRP */
+/*-----------------------------------------------------------*/
+
 void vQueueDelete( QueueHandle_t xQueue )
 {
     Queue_t * const pxQueue = xQueue;
@@ -2417,6 +2456,22 @@ static BaseType_t prvCopyDataToQueue( Queue_t * const pxQueue,
             }
         }
         #endif /* configUSE_MUTEXES */
+
+        #if ( configUSE_SRP == 1 )
+        {
+            /* pop SRP ceiling */
+            #if ( configUSE_MUTEXES == 1 )
+            if( pxQueue->uxQueueType != queueQUEUE_IS_MUTEX )
+            #endif
+            {
+                if( pxQueue->xResourceCeiling != ( TickType_t ) 0 )
+                {
+                    vSRPPopCeiling();
+                    xReturn = pdTRUE;
+                }
+            }
+        }
+        #endif /* configUSE_SRP */
     }
     else if( xPosition == queueSEND_TO_BACK )
     {

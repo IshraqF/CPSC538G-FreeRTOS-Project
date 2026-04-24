@@ -1873,6 +1873,10 @@ BaseType_t xQueueGenericReset( QueueHandle_t xQueue,
 UBaseType_t uxQueueGetQueueItemSize( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 UBaseType_t uxQueueGetQueueLength( QueueHandle_t xQueue ) PRIVILEGED_FUNCTION;
 
+#if ( configUSE_SRP == 1 )
+    void vQueueSetResourceCeiling( QueueHandle_t xQueue, TickType_t xCeiling ) PRIVILEGED_FUNCTION;
+#endif /* configUSE_SRP */
+
 /* *INDENT-OFF* */
 #ifdef __cplusplus
     }

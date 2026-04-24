@@ -50,10 +50,10 @@
 #define configMINIMAL_STACK_SIZE                ( configSTACK_DEPTH_TYPE ) 256
 #define configUSE_16_BIT_TICKS                  0
 
-/* EDF Scheduler Related */
+/* EDF Scheduler */
 #define configUSE_EDF_SCHEDULER                 1
-#define configEDF_MAX_TASKS                     16
-#define configEDF_MAX_SCHEDULING_POINTS         1000
+#define configEDF_MAX_TASKS                     100
+#define configEDF_MAX_SCHEDULING_POINTS         5000
 #define configEDF_ENABLE_DEBUG_LOG              1
 #define configUSE_TASK_GPIO                     1
 
@@ -61,6 +61,14 @@
 #define configUSE_CBS_SERVER                    1
 #define configCBS_QUEUE_LENGTH                  16
 
+
+/* SRP */
+#define configUSE_SRP                           1
+#define configSRP_MAX_CEILING_DEPTH             8
+
+/* Multicore support, these only matter if configNUMBER_OF_CORES > 1 */
+#define configGLOBAL_EDF_ENABLE                 1
+#define configPARTITIONED_EDF_ENABLE            !( configGLOBAL_EDF_ENABLE )
 
 #define configIDLE_SHOULD_YIELD                 1
 
@@ -84,7 +92,7 @@
 /* Memory allocation related definitions. */
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
-#define configTOTAL_HEAP_SIZE                   (128*1024)
+#define configTOTAL_HEAP_SIZE                   (200*1024)
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* Hook function related definitions. */
@@ -120,6 +128,7 @@
 #define configTICK_CORE                         0
 #define configRUN_MULTIPLE_PRIORITIES           1
 #define configUSE_CORE_AFFINITY                 0
+#define configUSE_PASSIVE_IDLE_HOOK             0
 #endif
 
 /* RP2040 specific */

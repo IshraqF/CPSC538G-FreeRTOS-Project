@@ -403,21 +403,48 @@ typedef enum
                                TickType_t xPeriod,
                                TickType_t xDeadline,
                                TickType_t xWCET,
-                            //    uint32_t uxGPIO,
+                               TickType_t xBlockingTime,
                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 
-    /* Drain the deadline-miss ring buffer and print events via printf/UART. */
+    /* dump deadline-miss ring buffer over UART */
     void vEDFDrainMissLog( void ) PRIVILEGED_FUNCTION;
 
-    /** Drain the context-switch ring buffer and print events via printf/UART. */
+    /* dump context-switch ring buffer over UART */
     void vEDFDrainSwitchLog( void ) PRIVILEGED_FUNCTION;
 
-    /* Print a table of admitted EDF task parameters via printf/UART. */
+    /* print admitted EDF task params */
     void vEDFPrintStats( void ) PRIVILEGED_FUNCTION;
 
-    /* EDF-aware periodic delay, always update xJobReleaseTime and xJobDeadline
-     * so EDF ordering is correct at high utilization. */
+    /* EDF-aware periodic delay, updates xJobReleaseTime/xJobDeadline
+     * so the EDF list stays sorted correctly */
     void vTaskDelayEDF( TickType_t * const pxPreviousWakeTime ) PRIVILEGED_FUNCTION;
+
+    #if ( configUSE_SRP == 1 )
+        void vSRPPushCeiling( TickType_t xCeiling ) PRIVILEGED_FUNCTION;
+        void vSRPPopCeiling( void ) PRIVILEGED_FUNCTION;
+        TickType_t xSRPGetCurrentCeiling( void ) PRIVILEGED_FUNCTION;
+        UBaseType_t uxSRPGetCeilingStackDepth( void ) PRIVILEGED_FUNCTION;
+        void vSRPDrainEventLog( void ) PRIVILEGED_FUNCTION;
+
+        BaseType_t xTaskCreateEDFSharedGroup( TaskFunction_t pxJobFunction,
+                                              const char * const pcGroupName,
+                                              const configSTACK_DEPTH_TYPE uxStackDepth,
+                                              UBaseType_t uxJobCount,
+                                              UBaseType_t uxPriority,
+                                              TickType_t xPeriod,
+                                              TickType_t xDeadline,
+                                              TickType_t xWCETPerJob,
+                                              TickType_t xBlockingTime,
+                                              TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+    #endif /* configUSE_SRP */
+
+    #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+        void vTaskEDFSetCore( TaskHandle_t xTask, BaseType_t xCoreID ) PRIVILEGED_FUNCTION;
+        void vTaskEDFClearCore( TaskHandle_t xTask ) PRIVILEGED_FUNCTION;
+    #endif
+
+    /* for testing */
+    UBaseType_t uxEDFGetAdmittedCount( void ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 
 #if ( configUSE_CBS_SERVER == 1 )
