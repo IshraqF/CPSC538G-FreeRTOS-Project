@@ -6,7 +6,7 @@
 #include "pico/stdlib.h"
 
 #ifndef TEST_CASE
-    #define TEST_CASE 28
+    #define TEST_CASE 27
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -1800,7 +1800,7 @@ int main( void )
     printf( "\r\n=== Partitioned EDF Test 27: deadline miss detection ===\r\n" );
     printf( "Task runs 120ms with D=100 for first 2 jobs, expect miss log entries\r\n\r\n" );
 
-    xTaskCreateEDF( vTask27Overrun, "P27_OVR", 512, NULL, 2,
+    xTaskCreateEDF( vTask27Overrun, "OVERRUN", 512, NULL, 2,
                     MS( 200 ), MS( 100 ), MS( 50 ), 0, NULL );
 
     xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
