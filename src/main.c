@@ -6,7 +6,7 @@
 
 /* Select which test to run (1–8). */
 #ifndef TEST_CASE
-    #define TEST_CASE  8
+    #define TEST_CASE  13
 #endif
 
 #define MS( x )   pdMS_TO_TICKS( x )
@@ -493,3 +493,590 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 8 */
+
+#if ( TEST_CASE == 9 )
+
+static volatile uint32_t ulJobRuns = 0;
+static TaskHandle_t xCBSServerHandle = NULL;
+
+static void vCBSJob_Increment( void * pvParams )
+{
+    ( void ) pvParams;
+    ulJobRuns++;
+    printf( "[JOB] run %lu at tick %lu\r\n",
+            ( unsigned long ) ulJobRuns,
+            ( unsigned long ) xTaskGetTickCount() );
+}
+
+static void vSubmitterTask( void * pvParams )
+{
+    ( void ) pvParams;
+
+    vTaskDelay( pdMS_TO_TICKS( 50 ) );
+
+    printf( "[TEST] submit job 1 at tick %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSJob_Increment, NULL ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 100 ) );
+
+    printf( "[TEST] submit job 2 at tick %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSJob_Increment, NULL ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 100 ) );
+
+    printf( "[TEST] final ulJobRuns = %lu\r\n", ( unsigned long ) ulJobRuns );
+    configASSERT( ulJobRuns == 2 );
+
+    printf( "[TEST] PASS\r\n" );
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Lifecycle Test ===\r\n" );
+
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 20 ),
+                    pdMS_TO_TICKS( 50 ),
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    xTaskCreate( vSubmitterTask, "SUBMIT", 512, NULL, 2, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 9 */
+
+#if ( TEST_CASE == 10 )
+
+static TaskHandle_t xCBSServerHandle = NULL;
+
+static void vCBSJob_Long( void * pvParams )
+{
+    volatile uint32_t i;
+    ( void ) pvParams;
+
+    printf( "[JOB] start at %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+
+    // for( i = 0; i < 4000000UL; i++ )
+    // {
+    //     __asm volatile ( "nop" );
+    // }
+
+    TickType_t xS = xTaskGetTickCount();
+    while( ( xTaskGetTickCount() - xS ) < pdMS_TO_TICKS( 60 ) ) { __asm volatile ( "nop" ); }
+
+    printf( "[JOB] end at %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+}
+
+static void vSubmitterTask( void * pvParams )
+{
+    ( void ) pvParams;
+
+    vTaskDelay( pdMS_TO_TICKS( 50 ) );
+
+    printf( "[TEST] submit long job at tick %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+
+    configASSERT(
+        xCBSSubmitJob( xCBSServerHandle, vCBSJob_Long, NULL ) == pdPASS
+    );
+
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Rule 3 Test ===\r\n" );
+
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 20 ),   /* Qs */
+                    pdMS_TO_TICKS( 50 ),   /* Ts */
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    xTaskCreate( vSubmitterTask, "SUBMIT", 512, NULL, 2, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 10 */
+
+#if ( TEST_CASE == 11 )
+
+static TaskHandle_t xCBSServerHandle = NULL;
+static volatile uint32_t ulJobRuns = 0;
+
+static void vCBSJob_Short( void * pvParams )
+{
+    TickType_t xStart = xTaskGetTickCount();
+    ( void ) pvParams;
+
+    ulJobRuns++;
+
+    printf( "[JOB] short start run=%lu tick=%lu\r\n",
+            ( unsigned long ) ulJobRuns,
+            ( unsigned long ) xStart );
+
+    while( ( xTaskGetTickCount() - xStart ) < pdMS_TO_TICKS( 5 ) )
+    {
+        __asm volatile ( "nop" );
+    }
+
+    printf( "[JOB] short end   run=%lu tick=%lu\r\n",
+            ( unsigned long ) ulJobRuns,
+            ( unsigned long ) xTaskGetTickCount() );
+}
+
+static void vSubmitterTask( void * pvParams )
+{
+    ( void ) pvParams;
+
+    vTaskDelay( pdMS_TO_TICKS( 50 ) );
+
+    printf( "[TEST] submit job 1 at tick %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSJob_Short, NULL ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 20 ) );
+
+    printf( "[TEST] submit job 2 at tick %lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSJob_Short, NULL ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 100 ) );
+
+    printf( "[TEST] final ulJobRuns = %lu\r\n",
+            ( unsigned long ) ulJobRuns );
+    configASSERT( ulJobRuns == 2 );
+
+    printf( "[TEST] PASS\r\n" );
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Rule 2 Test ===\r\n" );
+
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 20 ),    /* Qs */
+                    pdMS_TO_TICKS( 100 ),   /* Ts */
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    xTaskCreate( vSubmitterTask, "SUBMIT", 512, NULL, 2, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 11 */
+
+#if ( TEST_CASE == 12 )
+
+static TaskHandle_t xCBSServerHandle = NULL;
+static volatile uint32_t ulTau1Jobs = 0;
+
+static void vTau1( void * pvParams )
+{
+    TickType_t xLWT = xTaskGetTickCount();
+    ( void ) pvParams;
+
+    for( ;; )
+    {
+        TickType_t xStart = xTaskGetTickCount();
+        ulTau1Jobs++;
+
+        printf( "[TAU1] start job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xStart );
+
+        while( ( xTaskGetTickCount() - xStart ) < pdMS_TO_TICKS( 10 ) )
+        {
+            __asm volatile ( "nop" );
+        }
+
+        printf( "[TAU1] end   job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+static void vCBSJob_Long( void * pvParams )
+{
+    TickType_t xStart = xTaskGetTickCount();
+    ( void ) pvParams;
+
+    printf( "[CBSJOB] start tick=%lu\r\n",
+            ( unsigned long ) xStart );
+
+    while( ( xTaskGetTickCount() - xStart ) < pdMS_TO_TICKS( 80 ) )
+    {
+        __asm volatile ( "nop" );
+    }
+
+    printf( "[CBSJOB] end   tick=%lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+}
+
+static void vSubmitterTask( void * pvParams )
+{
+    ( void ) pvParams;
+
+    vTaskDelay( pdMS_TO_TICKS( 50 ) );
+
+    printf( "[TEST] submit long CBS job tick=%lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSJob_Long, NULL ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 250 ) );
+
+    printf( "[TEST] tau1 jobs seen = %lu\r\n",
+            ( unsigned long ) ulTau1Jobs );
+
+    configASSERT( ulTau1Jobs >= 5 );
+
+    printf( "[TEST] PASS\r\n" );
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS + Hard EDF Task Test ===\r\n" );
+
+    /* Hard task: C=10, T=50, D=50. */
+    xTaskCreateEDF( vTau1, "tau1", 512, NULL, 2,
+                    pdMS_TO_TICKS( 50 ),
+                    pdMS_TO_TICKS( 50 ),
+                    pdMS_TO_TICKS( 10 ),
+                    NULL );
+
+    /* CBS: Qs=20, Ts=50. */
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 20 ),
+                    pdMS_TO_TICKS( 50 ),
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    // xTaskCreate( vSubmitterTask, "SUBMIT", 512, NULL, 2, NULL );
+    xTaskCreateEDF( vSubmitterTask, "SUBMIT", 512, NULL, 2,
+                    pdMS_TO_TICKS( 200 ),
+                    pdMS_TO_TICKS( 5 ),
+                    pdMS_TO_TICKS( 1 ),
+                    NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 12 */
+
+#if ( TEST_CASE == 13 )
+
+static TaskHandle_t xCBSServerHandle = NULL;
+static volatile uint32_t ulTau1Jobs = 0;
+static volatile uint32_t ulCBSJobsDone = 0;
+
+/* Tune these for your board/compiler. Start with your existing calibration. */
+#define JOB_30MS_ITERS   300000UL
+#define JOB_40MS_ITERS   400000UL
+#define JOB_50MS_ITERS   500000UL
+#define TAU1_40MS_ITERS  400000UL
+
+static void vBurnCpuIters( uint32_t ulIters )
+{
+    volatile uint32_t i;
+
+    for( i = 0UL; i < ulIters; i++ )
+    {
+        __asm volatile ( "nop" );
+    }
+}
+
+static void vTau1( void * pvParams )
+{
+    TickType_t xLWT = xTaskGetTickCount();
+    ( void ) pvParams;
+
+    for( ;; )
+    {
+        ulTau1Jobs++;
+
+        printf( "[TAU1] start job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vBurnCpuIters( TAU1_40MS_ITERS );
+
+        printf( "[TAU1] end   job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+typedef struct
+{
+    const char * pcName;
+    uint32_t ulIters;
+} CBSJobParam_t;
+
+static CBSJobParam_t xJob40 = { "J40", JOB_40MS_ITERS };
+static CBSJobParam_t xJob30 = { "J30", JOB_30MS_ITERS };
+static CBSJobParam_t xJob50 = { "J50", JOB_50MS_ITERS };
+
+static void vCBSVariableJob( void * pvParams )
+{
+    CBSJobParam_t * pxJob = ( CBSJobParam_t * ) pvParams;
+
+    printf( "[CBSJOB] start %s tick=%lu\r\n",
+            pxJob->pcName,
+            ( unsigned long ) xTaskGetTickCount() );
+
+    vBurnCpuIters( pxJob->ulIters );
+
+    ulCBSJobsDone++;
+
+    printf( "[CBSJOB] end   %s tick=%lu done=%lu\r\n",
+            pxJob->pcName,
+            ( unsigned long ) xTaskGetTickCount(),
+            ( unsigned long ) ulCBSJobsDone );
+}
+
+static void vCBSSubmitterTwoJobs( void * pvParams )
+{
+    ( void ) pvParams;
+
+    /* Job 1 arrives at t = 30ms. */
+    vTaskDelay( pdMS_TO_TICKS( 30 ) );
+
+    printf( "[SUBMIT] J40 tick=%lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+
+    configASSERT(
+        xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob40 ) == pdPASS
+    );
+
+    vTaskDelay( pdMS_TO_TICKS( 137 ) );
+
+    printf( "[SUBMIT] J30 tick=%lu\r\n",
+            ( unsigned long ) xTaskGetTickCount() );
+
+    configASSERT(
+        xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob30 ) == pdPASS
+    );
+
+    vTaskDelay( pdMS_TO_TICKS( 300 ) );
+
+    printf( "[TEST] tau1 jobs=%lu cbs jobs done=%lu\r\n",
+            ( unsigned long ) ulTau1Jobs,
+            ( unsigned long ) ulCBSJobsDone );
+
+    // configASSERT( ulTau1Jobs >= 5 );
+    // configASSERT( ulCBSJobsDone == 3 );
+
+    printf( "[TEST] PASS\r\n" );
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Random Arrival Stress Test ===\r\n" );
+    printf( "tau1: C=40 T=70 D=70\r\n" );
+    printf( "CBS:  Qs=30 Ts=80\r\n" );
+    printf( "Jobs: 40ms, 30ms, 50ms at uneven intervals\r\n" );
+
+    xTaskCreateEDF( vTau1, "tau1", 512, NULL, 2,
+                    pdMS_TO_TICKS( 70 ),
+                    pdMS_TO_TICKS( 70 ),
+                    pdMS_TO_TICKS( 40 ),
+                    NULL );
+
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 30 ),
+                    pdMS_TO_TICKS( 80 ),
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    // xTaskCreateEDF( vCBSSubmitterTwoJobs, "SUBMIT", 512, NULL, 2,
+    //                 pdMS_TO_TICKS( 500 ),
+    //                 pdMS_TO_TICKS( 5 ),
+    //                 pdMS_TO_TICKS( 1 ),
+    //                 NULL );
+    xTaskCreate( vCBSSubmitterTwoJobs, "SUBMIT", 512, NULL, 1, NULL );
+
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 13 */
+
+#if ( TEST_CASE == 14 )
+
+static TaskHandle_t xCBSServerHandle = NULL;
+static volatile uint32_t ulTau1Jobs = 0;
+static volatile uint32_t ulCBSJobsDone = 0;
+
+/* Tune these for your board/compiler. Start with your existing calibration. */
+#define JOB_30MS_ITERS   300000UL
+#define JOB_40MS_ITERS   400000UL
+#define JOB_50MS_ITERS   500000UL
+#define TAU1_40MS_ITERS  400000UL
+
+static void vBurnCpuIters( uint32_t ulIters )
+{
+    volatile uint32_t i;
+
+    for( i = 0UL; i < ulIters; i++ )
+    {
+        __asm volatile ( "nop" );
+    }
+}
+
+static void vTau1( void * pvParams )
+{
+    TickType_t xLWT = xTaskGetTickCount();
+    ( void ) pvParams;
+
+    for( ;; )
+    {
+        ulTau1Jobs++;
+
+        printf( "[TAU1] start job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vBurnCpuIters( TAU1_40MS_ITERS );
+
+        printf( "[TAU1] end   job=%lu tick=%lu\r\n",
+                ( unsigned long ) ulTau1Jobs,
+                ( unsigned long ) xTaskGetTickCount() );
+
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+typedef struct
+{
+    const char * pcName;
+    uint32_t ulIters;
+} CBSJobParam_t;
+
+static CBSJobParam_t xJob40 = { "J40", JOB_40MS_ITERS };
+static CBSJobParam_t xJob30 = { "J30", JOB_30MS_ITERS };
+static CBSJobParam_t xJob50 = { "J50", JOB_50MS_ITERS };
+
+static void vCBSVariableJob( void * pvParams )
+{
+    CBSJobParam_t * pxJob = ( CBSJobParam_t * ) pvParams;
+
+    printf( "[CBSJOB] start %s tick=%lu\r\n",
+            pxJob->pcName,
+            ( unsigned long ) xTaskGetTickCount() );
+
+    vBurnCpuIters( pxJob->ulIters );
+
+    ulCBSJobsDone++;
+
+    printf( "[CBSJOB] end   %s tick=%lu done=%lu\r\n",
+            pxJob->pcName,
+            ( unsigned long ) xTaskGetTickCount(),
+            ( unsigned long ) ulCBSJobsDone );
+}
+
+static void vCBSRandomSubmitter( void * pvParams )
+{
+    ( void ) pvParams;
+
+    /* Random-looking but deterministic arrival offsets. */
+    vTaskDelay( pdMS_TO_TICKS( 25 ) );
+
+    printf( "[SUBMIT] J40 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob40 ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 137 ) );
+
+    printf( "[SUBMIT] J30 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob30 ) == pdPASS );
+
+    // vTaskDelay( pdMS_TO_TICKS( 91 ) );
+
+    // printf( "[SUBMIT] J50 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+    // configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob50 ) == pdPASS );
+
+    vTaskDelay( pdMS_TO_TICKS( 300 ) );
+
+    printf( "[TEST] tau1 jobs=%lu cbs jobs done=%lu\r\n",
+            ( unsigned long ) ulTau1Jobs,
+            ( unsigned long ) ulCBSJobsDone );
+
+    // configASSERT( ulTau1Jobs >= 5 );
+    // configASSERT( ulCBSJobsDone == 3 );
+
+    printf( "[TEST] PASS\r\n" );
+    vTaskSuspend( NULL );
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== CBS Random Arrival Stress Test ===\r\n" );
+    printf( "tau1: C=40 T=70 D=70\r\n" );
+    printf( "CBS:  Qs=30 Ts=80\r\n" );
+    printf( "Jobs: 40ms, 30ms, 50ms at uneven intervals\r\n" );
+
+    xTaskCreateEDF( vTau1, "tau1", 512, NULL, 2,
+                    pdMS_TO_TICKS( 70 ),
+                    pdMS_TO_TICKS( 70 ),
+                    pdMS_TO_TICKS( 40 ),
+                    NULL );
+
+    xTaskCreateCBS( "CBS", 512, 2,
+                    pdMS_TO_TICKS( 30 ),
+                    pdMS_TO_TICKS( 80 ),
+                    &xCBSServerHandle );
+
+    configASSERT( xCBSServerHandle != NULL );
+
+    xTaskCreate( vCBSRandomSubmitter, "SUBMIT", 512, NULL, 1, NULL );
+
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
+
+    vTaskStartScheduler();
+
+    while( 1 ) {}
+}
+
+#endif

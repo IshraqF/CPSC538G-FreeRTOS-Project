@@ -7217,10 +7217,10 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
     }
 
     #if ( configUSE_CBS_SERVER == 1 )
-    if( pxTCB->xTaskIsCBS != pdTRUE )
-    {
-        return pdFAIL;
-    }
+        if( pxTCB->xTaskIsCBS != pdTRUE )
+        {
+            return pdFAIL;
+        }
     #endif
 
     xJob.pxFunction   = pxFunction;
@@ -7228,14 +7228,11 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
 
     /* First, try to enqueue the job.
      * A CBS job is only considered "accepted" if this succeeds. */
-    xSendResult = xQueueSend( ( QueueHandle_t ) pxTCB->xCBSQueue,
-                              &xJob,
-                              ( TickType_t ) 0 );
 
-    if( xSendResult != pdPASS )
-    {
-        return pdFAIL;
-    }
+    // if( xSendResult != pdPASS )
+    // {
+    //     return pdFAIL;
+    // }
 
     taskENTER_CRITICAL();
     {
@@ -7313,6 +7310,22 @@ BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
         }
     }
     taskEXIT_CRITICAL();
+
+    xSendResult = xQueueSend( ( QueueHandle_t ) pxTCB->xCBSQueue,
+                              &xJob,
+                              ( TickType_t ) 0 );
+
+    if( xSendResult != pdPASS )
+    {
+        taskENTER_CRITICAL();
+        {
+            configASSERT( pxTCB->xCBSPending > 0U );
+            pxTCB->xCBSPending--;
+        }
+        taskEXIT_CRITICAL();
+
+        return pdFAIL;
+    }
 
     if( xNeedYield == pdTRUE )
     {
