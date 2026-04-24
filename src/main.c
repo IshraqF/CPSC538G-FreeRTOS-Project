@@ -1578,8 +1578,6 @@ int main( void )
  *   Task A: T=200, D=200, C=80   U=0.4
  *   Task B: T=200, D=200, C=80   U=0.4
  *   Total U per core: both fit on core 0 (U=0.8 <= 1.0).
- *   Both tasks should be pinned to core 0; core 1 runs the idle task only.
- *   Verify: switch log shows both tasks always on C0.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 23 )
 
@@ -1623,7 +1621,6 @@ int main( void )
  *   Task A: T=100, D=100, C=60   U=0.6  → core 0 (60% used)
  *   Task B: T=100, D=100, C=30   U=0.3  → core 0 (90% used)
  *   Task C: T=100, D=100, C=20   U=0.2  → core 0 full (would reach 110%), first-fit → core 1
- *   Verify: A and B on C0, C on C1.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 24 )
 
@@ -1671,7 +1668,6 @@ int main( void )
  *   Task A: T=100, D=100, C=90   U=0.9  → core 0
  *   Task B: T=100, D=100, C=90   U=0.9  → core 1
  *   Task C: T=100, D=100, C=20   U=0.2  → rejected (core 0: 1.1, core 1: 1.1)
- *   Verify: C is rejected even though global utilization would allow it.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 25 )
 
@@ -1716,8 +1712,6 @@ int main( void )
 /* -----------------------------------------------------------------------
  * TEST 26 — Partitioned EDF: no migration across jobs
  *   3 tasks on 2 cores. Each task prints its running core via the switch log.
- *   After 10 seconds, drain the switch log and verify each task always
- *   appears on the same core across all its jobs.
  *   Task A: T=100, D=100, C=40  → core 0
  *   Task B: T=150, D=150, C=40  → core 0
  *   Task C: T=200, D=200, C=70  → core 1
@@ -1773,7 +1767,6 @@ int main( void )
  * TEST 27 — Partitioned EDF: deadline miss detection
  *   Same structure as Test 22 but under partitioned scheduling.
  *   Task A: T=200, D=100, C=50 (declared). First 2 jobs run 120ms → miss.
- *   Verify: miss log reports overruns for first 2 jobs.
  * ----------------------------------------------------------------------- */
 #if ( TEST_CASE == 27 )
 
@@ -1909,3 +1902,56 @@ int main( void )
 }
 
 #endif /* TEST_CASE == 28 */
+
+/* -----------------------------------------------------------------------
+ * TEST 29 — ~100 periodic Partitioned EDF tasks across both cores
+ *   100 tasks, each T=1000, D=1000, C=12. U_i = 0.012 per task.
+ *   First-fit fills core 0 to U=1.0 with the first 82 tasks; the
+ *   remaining tasks are assigned to core 1.
+ * ----------------------------------------------------------------------- */
+#if ( TEST_CASE == 29 )
+
+static void vTask29Body( void * pvParams )
+{
+    ( void ) pvParams;
+    TickType_t xLWT = 0;
+    for( ;; )
+    {
+        TickType_t xS = xTaskGetTickCount();
+        while( ( xTaskGetTickCount() - xS ) < MS( 12 ) ) { __asm volatile ( "nop" ); }
+        vTaskDelayEDF( &xLWT );
+    }
+}
+
+int main( void )
+{
+    stdio_init_all();
+    printf( "\r\n=== Test 29: 100 periodic Partitioned EDF tasks ===\r\n" );
+    printf( "T=1000 D=1000 C=12 x100  U_i=0.012  total U=1.20\r\n" );
+    printf( "Expected: first 82 tasks on C0 (U=0.984), next 18 tasks on C1 (U=0.216)\r\n\r\n" );
+
+    char cName[ configMAX_TASK_NAME_LEN ];
+    UBaseType_t uxAdmitted = 0;
+    UBaseType_t ux;
+
+    for( ux = 0; ux < 100; ux++ )
+    {
+        snprintf( cName, sizeof( cName ), "P%lu", ( unsigned long ) ux );
+        BaseType_t xRet = xTaskCreateEDF( vTask29Body, cName, 256, NULL, 2,
+                                          MS( 1000 ), MS( 1000 ), MS( 12 ), 0, NULL );
+        if( xRet == pdPASS )
+        {
+            uxAdmitted++;
+        }
+    }
+
+    printf( "Admitted %lu / 100 tasks\r\n", ( unsigned long ) uxAdmitted );
+
+    xTaskCreate( vLEDTask, "LED", 256, NULL, 1, NULL );
+    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 1, NULL );
+
+    vTaskStartScheduler();
+    while( 1 ) {}
+}
+
+#endif /* TEST_CASE == 29 */

@@ -39,8 +39,10 @@ When an EDF task unblocks from `vTaskDelayEDF`, semaphore give, etc., `prvYieldF
 
 1. If task already running, do nothing
 2. For each core, check what's running:
-  - non-EDF task: always preemptable (treat as infinite deadline)
-  - EDF task with later deadline than the unblocked task: add as preemption candidate
+
+- non-EDF task: always preemptable (treat as infinite deadline)
+- EDF task with later deadline than the unblocked task: add as preemption candidate
+
 3. Pick the core running the latest-deadline task and call `prvYieldCore()` on it
 
 `prvYieldCore` writes to inter-core FIFO, which triggers an interrupt on target core, causing interrupt which causes context switch, where the target core re-evaluates EDF ready list and picks the earlier-deadline task
@@ -80,7 +82,7 @@ All global code is guarded by `#if configUSE_EDF_SCHEDULER == 1 && configGLOBAL_
 
 - `configGLOBAL_EDF_ENABLE 1` for global EDF (default as per spec)
 - `configGLOBAL_EDF_ENABLE 0` for partitioned EDF, `configPARTITIONED_EDF_ENABLE` is defined as `!(configGLOBAL_EDF_ENABLE)`, so use `configGLOBAL_EDF_ENABLE` as the switch
-If EDF is disabled entirely, FreeRTOS runs its default fixed-priority scheduler.
+  If EDF is disabled entirely, FreeRTOS runs its default fixed-priority scheduler.
 
 ## Thread Safety
 
@@ -95,4 +97,52 @@ All shared state access is sequential:
 
 # Partitioned EDF
 
-TODO
+## Overview
+
+Use separate ready lists `xEDFReadyTasksList[coreID]` for each core, and each core only picks from its own list. Tasks are statically partitioned to cores, no migration allowed.
+
+## Task Selection `prvSelectHighestPriorityTask`
+
+When a core needs to pick a task, it iterates its own `xEDFReadyTasksList[coreID]` (sorted by increasing deadline) then selects the first task that satisfies EDF criteria. If a task is running on the core, keep it. If not, make the task scheduleable in the core, since task is already assigned to this core.
+
+```
+for each task in xEDFReadyTasksList[coreID] (sorted by deadline):
+  if task == currentlyRunningOnThisCore:
+    keep it, done
+  if task.runState == NOT_RUNNING:
+    schedule it, done
+```
+
+## Task Preemption `prvYieldForTask`
+
+When an EDF task unblocks from `vTaskDelayEDF`, semaphore give, etc., `prvYieldForTask` checks if the task is already running. If not, it checks if the task is assigned to this core (based on affinity mask). If assigned, preempt the currently running task on this core by calling `prvYieldCore()`. No cross-core preemption since tasks are statically partitioned.
+
+## Admission Control
+
+Separate admission control for each core, using the same LL bound but with `m=1` since each core is independent. So the check is `U <= 1.0` for each core. Our implementation:
+
+```c
+return ( ullUtilSum <= LL_SCALE ) ? pdPASS : pdFAIL;
+```
+
+## Core Affinity/Pinning
+
+`xTaskCreateEDF()` uses admission control to determine the core assignment for the task. The task is then pinned to the core by calling `xTaskCoreAffinitySet()` with the core's bit. Once the task is assigned to a core, it cannot migrate and will only be scheduled on that core.
+
+## Deadline Miss
+
+Same as global EDF, `prvEDFCheckDeadlineMiss()` runs every tick from the tick ISR (only on core 0) and checks each core's running EDF task for deadline misses.
+
+## Switch Log
+
+Same as global EDF, both cores write to the same switch log buffer inside `vTaskSwitchContext`.
+
+## Configuration
+
+All partitioned EDF code is guarded by `#if configUSE_EDF_SCHEDULER == 1 && configPARTITIONED_EDF_ENABLE == 1`. The user sets:
+
+- `configGLOBAL_EDF_ENABLE 0` for partitioned EDF since `configPARTITIONED_EDF_ENABLE` is defined as `!(configGLOBAL_EDF_ENABLE)`
+
+## Thread Safety
+
+Each core only accesses its own ready list and running task pointer, so no cross-core synchronization needed for those. The switch log buffer is still shared but only written in `vTaskSwitchContext` which holds locks, so it's thread-safe. Deadline miss log is still only written from core 0's tick ISR.

@@ -196,7 +196,7 @@
 
 /*-----------------------------------------------------------*/
 
-    /* Resolve the EDF ready list for single-core builds */
+    /* EDF ready list for single and multi-core */
     #if ( configPARTITIONED_EDF_ENABLE == 1 )
         #define edfREADY_LIST    xEDFReadyTasksList[ 0 ]
     #else
@@ -1155,13 +1155,13 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
         }
         #endif /* configUSE_EDF_SCHEDULER && configGLOBAL_EDF_ENABLE */
 
-        /* Partitioned EDF: preempt only the assigned core of this task */
+        /* partitioned EDF: preempt only the assigned core of this task */
         #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
         if( pxTCB->xTaskIsEDF == pdTRUE )
         {
             if( taskTASK_IS_RUNNING( pxTCB ) == pdFALSE )
             {
-                /* Derive the assigned core from the task's affinity mask */
+                /* get assigned core from the task's affinity mask */
                 BaseType_t xAssignedCore = ( BaseType_t ) -1;
 
                 for( xCoreID = ( BaseType_t ) 0; xCoreID < ( BaseType_t ) configNUMBER_OF_CORES; xCoreID++ )
@@ -1406,7 +1406,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
         }
         #endif /* configUSE_EDF_SCHEDULER && configGLOBAL_EDF_ENABLE */
 
-        /* Partitioned EDF: pick ready task from this core's partition */
+        /* partitioned EDF: pick ready task from this core's partition */
         #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
         {
             if( listLIST_IS_EMPTY( &xEDFReadyTasksList[ xCoreID ] ) == pdFALSE )
@@ -1428,7 +1428,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
                     }
                     else if( pxTCB->xTaskRunState == taskTASK_NOT_RUNNING )
                     {
-                        /* No affinity check needed: task is already pinned to this core */
+                        /* task is already assigned to this core */
                         pxCurrentTCBs[ xCoreID ]->xTaskRunState = taskTASK_NOT_RUNNING;
                         pxTCB->xTaskRunState = xCoreID;
                         pxCurrentTCBs[ xCoreID ] = pxTCB;
@@ -1437,6 +1437,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
                     }
                 }
 
+                /* Log */
                 if( ( xTaskScheduled == pdTRUE ) && ( configEDF_ENABLE_DEBUG_LOG == 1 ) )
                 {
                     UBaseType_t uxWriteSlot = uxEDFSwitchLogHead % edfSWITCH_LOG_SIZE;
@@ -2863,7 +2864,6 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
 #endif /* INCLUDE_vTaskDelete */
 /*-----------------------------------------------------------*/
 
-/* Forward declarations for partitioned EDF helpers defined later in this file */
 #if ( ( configUSE_EDF_SCHEDULER == 1 ) && ( configPARTITIONED_EDF_ENABLE == 1 ) )
     static BaseType_t prvEDFAdmissionControlPartitioned( TickType_t xPeriod,
                                                          TickType_t xDeadline,
@@ -2893,7 +2893,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
 
         #if ( configPARTITIONED_EDF_ENABLE == 1 )
         {
-            /* --- Partitioned EDF: first-fit core selection --- */
+            /* first-fit core selection */
             BaseType_t xSelectedCore = ( BaseType_t ) -1;
             BaseType_t xCore;
 
@@ -2994,7 +2994,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
         }
         #else /* configGLOBAL_EDF_ENABLE */
         {
-            /* --- Global EDF: single shared admission control --- */
+            /* run admission control */
             taskENTER_CRITICAL();
             {
                 xReturn = prvEDFAdmissionControl( xPeriod, xDeadline, xComputationTime, xBlockingTime );
@@ -3039,12 +3039,12 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                         pxNewTCB->uxCoreAffinityMask = tskNO_AFFINITY;
                     #endif
 
-                    /* Move xTaskCreate to the EDF ready list */
+                    /* move from fixed-priority list to the EDF ready list */
                     ( void ) uxListRemove( &( pxNewTCB->xStateListItem ) );
                     taskRESET_READY_PRIORITY( ( UBaseType_t ) 1U );
                     prvEDFAddToReadyList( pxNewTCB );
 
-                    /* Register in the admitted task array for future admission control. */
+                    /* save in the admitted array for future admission checks */
                     for( uxSlot = 0U; uxSlot < ( UBaseType_t ) configEDF_MAX_TASKS; uxSlot++ )
                     {
                         if( xEDFAdmittedTasks[ uxSlot ].xValid == pdFALSE )

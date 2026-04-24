@@ -14,4 +14,6 @@ Currently `prvEDFCheckDeadlineMiss` only runs on core 0's tick ISR, where it che
 
 # Partitioned EDF
 
-TODO
+## Heuristic
+
+Current implementation uses first-fit heuristic for partitioning. More sophisticated heuristics (e.g. best-fit, worst-fit) or even meta-heuristics (e.g. genetic algorithm) could be explored to achieve better load balancing across cores and higher acceptance ratio.
