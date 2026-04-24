@@ -55,13 +55,19 @@
 #define configEDF_MAX_TASKS                     100
 #define configEDF_MAX_SCHEDULING_POINTS         5000
 #define configEDF_ENABLE_DEBUG_LOG              1
+#define configUSE_TASK_GPIO                     1
+
+/* CBS (Constant Bandwidth Server) Related */
+#define configUSE_CBS_SERVER                    1
+#define configCBS_QUEUE_LENGTH                  16
+
 
 /* SRP */
-#define configUSE_SRP                           0
+#define configUSE_SRP                           1
 #define configSRP_MAX_CEILING_DEPTH             8
 
 /* Multicore support, these only matter if configNUMBER_OF_CORES > 1 */
-#define configGLOBAL_EDF_ENABLE                 0
+#define configGLOBAL_EDF_ENABLE                 1
 #define configPARTITIONED_EDF_ENABLE            !( configGLOBAL_EDF_ENABLE )
 
 #define configIDLE_SHOULD_YIELD                 1
@@ -118,10 +124,10 @@
 
 #if FREE_RTOS_KERNEL_SMP // set by the RP2040 SMP port of FreeRTOS
 /* SMP port only */
-#define configNUMBER_OF_CORES                   2
+#define configNUMBER_OF_CORES                   1
 #define configTICK_CORE                         0
 #define configRUN_MULTIPLE_PRIORITIES           1
-#define configUSE_CORE_AFFINITY                 1
+#define configUSE_CORE_AFFINITY                 0
 #define configUSE_PASSIVE_IDLE_HOOK             0
 #endif
 
@@ -152,6 +158,12 @@ to exclude the API function. */
 #define INCLUDE_xTaskResumeFromISR              1
 #define INCLUDE_xQueueGetMutexHolder            1
 
-/* A header file that defines trace macro can be included here. */
+// /* Forward declarations for trace hook callbacks defined in main.c. */
+// void vTaskSwitchedOutHook( void );
+// void vTaskSwitchedInHook( void );
+
+// /* A header file that defines trace macro can be included here. */
+// #define traceTASK_SWITCHED_OUT() vTaskSwitchedOutHook()
+// #define traceTASK_SWITCHED_IN()  vTaskSwitchedInHook()
 
 #endif /* FREERTOS_CONFIG_H */

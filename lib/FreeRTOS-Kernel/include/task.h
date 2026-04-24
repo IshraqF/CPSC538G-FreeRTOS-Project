@@ -447,6 +447,30 @@ typedef enum
     UBaseType_t uxEDFGetAdmittedCount( void ) PRIVILEGED_FUNCTION;
 #endif /* configUSE_EDF_SCHEDULER */
 
+#if ( configUSE_CBS_SERVER == 1 )
+    typedef struct CBSJob
+    {
+        void ( * pxFunction )( void * pvParameters ); /**< Job function pointer. */
+        void * pvParameters;                          /**< Argument passed to pxFunction. */
+    } CBSJob_t;
+
+    BaseType_t xTaskCreateCBS( const char * const   pcName,
+                                const uint32_t       uxStackDepth,
+                                UBaseType_t          uxPriority,
+                                TickType_t           xQs,
+                                TickType_t           xTs,
+                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+
+    BaseType_t xCBSSubmitJob( TaskHandle_t   xServer,
+                               void         ( *pxFunction )( void * ),
+                               void         * pvParameters ) PRIVILEGED_FUNCTION;
+
+    BaseType_t xCBSSubmitJobFromISR( TaskHandle_t   xServer,
+                                      void         ( *pxFunction )( void * ),
+                                      void         * pvParameters,
+                                      BaseType_t   * pxHigherPriorityTaskWoken ) PRIVILEGED_FUNCTION;
+#endif /* configUSE_CBS_SERVER */
+
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
     BaseType_t xTaskCreateAffinitySet( TaskFunction_t pxTaskCode,
                                        const char * const pcName,
@@ -1247,6 +1271,7 @@ UBaseType_t uxTaskBasePriorityGetFromISR( const TaskHandle_t xTask ) PRIVILEGED_
  */
 void vTaskPrioritySet( TaskHandle_t xTask,
                        UBaseType_t uxNewPriority ) PRIVILEGED_FUNCTION;
+UBaseType_t uxTaskGPIOGet( void ) PRIVILEGED_FUNCTION;
 
 /**
  * task. h
