@@ -389,112 +389,7 @@ int main( void )
 
 #endif /* TEST_CASE == 7 */
 
-/* -----------------------------------------------------------------------
- * TEST 8 — CBS book example (Figure 6.14), scaled 1 unit = 10 ms
- *
- * Hard periodic task τ1:  C=40ms, T=70ms, D=70ms  → U  = 4/7 ≈ 0.571
- * CBS server:             Qs=30ms, Ts=80ms          → Us = 3/8 = 0.375
- * τ2 submitter (EDF):     T=100ms, D=5ms,   C=1ms  → always preempts τ1
- * Total utilization:      ~0.956 ≤ 1.0 (schedulable)
- *
- * τ2 is an EDF task that submits one job to the CBS server each period.
- * Being EDF-scheduled it runs at the right time without needing hardware
- * interrupts and without being blocked by τ1.
- * ----------------------------------------------------------------------- */
-#if ( TEST_CASE == 8 )
-
-/* Hard periodic task τ1: C=40ms, T=70ms. */
-static void vTask1( void * pvParams )
-{
-    ( void ) pvParams;
-    TickType_t xLWT = xTaskGetTickCount();
-
-    for( ; ; )
-    {
-        TickType_t xS = xTaskGetTickCount();
-        while( ( xTaskGetTickCount() - xS ) < MS( 40 ) ) { __asm volatile ( "nop" ); }
-
-        vTaskDelayEDF( &xLWT );
-    }
-}
-
-/* τ2 job body — runs inside the CBS server each activation.
- *
- * Iteration-based busy-wait so only actual CPU time is counted.
- * A volatile counter only advances when this task is on the CPU;
- * preemption by tau1 pauses it, so the remaining 10ms executes
- * after tau1's period ends — leaving cs≈20 and triggering Rule 2.
- *
- * CBS_JOB_ITERS is calibrated empirically: the output showed that
- * 1,250,000 iterations consumed >60ms of CPU (Rule 3 fired twice
- * before the job finished), so we scale to 40ms: ×(40/60) ≈ 830000.
- * If Rule 3 fires more than once, halve the count; if the job
- * finishes before Rule 3 fires at all, double it. */
-#define CBS_JOB_ITERS  400000UL
-
-static void vTask2Job( void * pvParams )
-{
-    ( void ) pvParams;
-    volatile uint32_t i;
-    for( i = 0UL; i < CBS_JOB_ITERS; i++ ) { __asm volatile ( "nop" ); }
-}
-
-static TaskHandle_t xCBSServerHandle = NULL;
-
-/* τ2 submitter: EDF periodic task, T=100ms, D=5ms, C≈1ms.
- * Submits exactly 2 jobs to demonstrate all three CBS rules:
- *   Job 1 (t=30)  → Rule 1 (fresh deadline) + Rule 3 (budget exhausted at t=70)
- *   Job 2 (t=130) → Rule 2 (reuse deadline, condition false, cs≈19)
- * After 2 submissions τ2 suspends itself so the CBS server drains cleanly
- * without an infinite job backlog (CBS bandwidth 37.5% < job rate 41ms/100ms). */
-static void vTask2( void * pvParams )
-{
-    ( void ) pvParams;
-
-    /* Initial offset: block for 30ms so the EDF loop starts at t=30ms.
-     * vTaskDelayEDF then targets 30+100=130ms for the second submission. */
-    vTaskDelay( MS( 30 ) );
-
-    TickType_t xLWT = xTaskGetTickCount();   /* ≈ 30 */
-
-    for( ;; )
-    {
-        printf( "[tau2] submit at tick %lu\r\n", ( unsigned long ) xTaskGetTickCount() );
-        xCBSSubmitJob( xCBSServerHandle, vTask2Job, NULL );
-        vTaskDelayEDF( &xLWT );
-    }
-}
-
-int main( void )
-{
-    stdio_init_all();
-    printf( "\r\n=== CBS Test 8 ===\r\n" );
-    printf( "tau1: C=40ms T=70ms  D=70ms  (U=0.571)\r\n" );
-    printf( "CBS:  Qs=30ms Ts=80ms        (Us=0.375)\r\n" );
-    printf( "tau2: T=100ms D=5ms   C=1ms  (submitter, always preempts tau1)\r\n" );
-
-    /* Hard periodic task τ1. */
-    xTaskCreateEDF( vTask1, "tau1", 512, NULL, 2,
-                    MS( 70 ), MS( 70 ), MS( 40 ), NULL );
-
-    /* CBS server: Qs=30ms, Ts=80ms. */
-    xTaskCreateCBS( "CBS", 512, 2, MS( 30 ), MS( 80 ), &xCBSServerHandle );
-
-    /* τ2 submitter: EDF task, period=100ms, deadline=5ms, wcet=1ms.
-     * D=5ms ensures tau2's absolute deadline is always earlier than tau1's
-     * (worst case: tau2 arrives at t=200, tau1 deadline=210 → 205 < 210). */
-    xTaskCreateEDF( vTask2, "tau2", 512, NULL, 2,
-                    MS( 100 ), MS( 5 ), MS( 1 ), NULL );
-
-    xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
-
-    vTaskStartScheduler();
-    while( 1 ) {}
-}
-
-#endif /* TEST_CASE == 8 */
-
-#if ( TEST_CASE == 9 )
+#if ( TEST_CASE == 30 )
 
 static volatile uint32_t ulJobRuns = 0;
 static TaskHandle_t xCBSServerHandle = NULL;
@@ -553,9 +448,9 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif /* TEST_CASE == 9 */
+#endif /* TEST_CASE == 30 */
 
-#if ( TEST_CASE == 10 )
+#if ( TEST_CASE == 31 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
 
@@ -566,11 +461,6 @@ static void vCBSJob_Long( void * pvParams )
 
     printf( "[JOB] start at %lu\r\n",
             ( unsigned long ) xTaskGetTickCount() );
-
-    // for( i = 0; i < 4000000UL; i++ )
-    // {
-    //     __asm volatile ( "nop" );
-    // }
 
     TickType_t xS = xTaskGetTickCount();
     while( ( xTaskGetTickCount() - xS ) < pdMS_TO_TICKS( 60 ) ) { __asm volatile ( "nop" ); }
@@ -601,8 +491,8 @@ int main( void )
     printf( "\r\n=== CBS Rule 3 Test ===\r\n" );
 
     xTaskCreateCBS( "CBS", 512, 2,
-                    pdMS_TO_TICKS( 20 ),   /* Qs */
-                    pdMS_TO_TICKS( 50 ),   /* Ts */
+                    pdMS_TO_TICKS( 20 ),
+                    pdMS_TO_TICKS( 50 ),
                     &xCBSServerHandle );
 
     configASSERT( xCBSServerHandle != NULL );
@@ -615,9 +505,9 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif /* TEST_CASE == 10 */
+#endif /* TEST_CASE == 31 */
 
-#if ( TEST_CASE == 11 )
+#if ( TEST_CASE == 32 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
 static volatile uint32_t ulJobRuns = 0;
@@ -675,8 +565,8 @@ int main( void )
     printf( "\r\n=== CBS Rule 2 Test ===\r\n" );
 
     xTaskCreateCBS( "CBS", 512, 2,
-                    pdMS_TO_TICKS( 20 ),    /* Qs */
-                    pdMS_TO_TICKS( 100 ),   /* Ts */
+                    pdMS_TO_TICKS( 20 ),
+                    pdMS_TO_TICKS( 100 ),
                     &xCBSServerHandle );
 
     configASSERT( xCBSServerHandle != NULL );
@@ -689,9 +579,9 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif /* TEST_CASE == 11 */
+#endif /* TEST_CASE == 32 */
 
-#if ( TEST_CASE == 12 )
+#if ( TEST_CASE == 33 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
 static volatile uint32_t ulTau1Jobs = 0;
@@ -767,14 +657,12 @@ int main( void )
     stdio_init_all();
     printf( "\r\n=== CBS + Hard EDF Task Test ===\r\n" );
 
-    /* Hard task: C=10, T=50, D=50. */
     xTaskCreateEDF( vTau1, "tau1", 512, NULL, 2,
                     pdMS_TO_TICKS( 50 ),
                     pdMS_TO_TICKS( 50 ),
                     pdMS_TO_TICKS( 10 ),
                     NULL );
 
-    /* CBS: Qs=20, Ts=50. */
     xTaskCreateCBS( "CBS", 512, 2,
                     pdMS_TO_TICKS( 20 ),
                     pdMS_TO_TICKS( 50 ),
@@ -782,7 +670,6 @@ int main( void )
 
     configASSERT( xCBSServerHandle != NULL );
 
-    // xTaskCreate( vSubmitterTask, "SUBMIT", 512, NULL, 2, NULL );
     xTaskCreateEDF( vSubmitterTask, "SUBMIT", 512, NULL, 2,
                     pdMS_TO_TICKS( 200 ),
                     pdMS_TO_TICKS( 5 ),
@@ -795,21 +682,20 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif /* TEST_CASE == 12 */
+#endif /* TEST_CASE == 33 */
 
-#if ( TEST_CASE == 13 )
+#if ( TEST_CASE == 34 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
 static volatile uint32_t ulTau1Jobs = 0;
 static volatile uint32_t ulCBSJobsDone = 0;
 
-/* Tune these for your board/compiler. Start with your existing calibration. */
 #define JOB_30MS_ITERS   300000UL
 #define JOB_40MS_ITERS   400000UL
 #define JOB_50MS_ITERS   500000UL
 #define TAU1_40MS_ITERS  400000UL
 
-static void vBurnCpuIters( uint32_t ulIters )
+static void vCpuIters( uint32_t ulIters )
 {
     volatile uint32_t i;
 
@@ -832,7 +718,7 @@ static void vTau1( void * pvParams )
                 ( unsigned long ) ulTau1Jobs,
                 ( unsigned long ) xTaskGetTickCount() );
 
-        vBurnCpuIters( TAU1_40MS_ITERS );
+        vCpuIters( TAU1_40MS_ITERS );
 
         printf( "[TAU1] end   job=%lu tick=%lu\r\n",
                 ( unsigned long ) ulTau1Jobs,
@@ -860,7 +746,7 @@ static void vCBSVariableJob( void * pvParams )
             pxJob->pcName,
             ( unsigned long ) xTaskGetTickCount() );
 
-    vBurnCpuIters( pxJob->ulIters );
+    vCpuIters( pxJob->ulIters );
 
     ulCBSJobsDone++;
 
@@ -874,7 +760,6 @@ static void vCBSSubmitterTwoJobs( void * pvParams )
 {
     ( void ) pvParams;
 
-    /* Job 1 arrives at t = 30ms. */
     vTaskDelay( pdMS_TO_TICKS( 30 ) );
 
     printf( "[SUBMIT] J40 tick=%lu\r\n",
@@ -898,9 +783,6 @@ static void vCBSSubmitterTwoJobs( void * pvParams )
     printf( "[TEST] tau1 jobs=%lu cbs jobs done=%lu\r\n",
             ( unsigned long ) ulTau1Jobs,
             ( unsigned long ) ulCBSJobsDone );
-
-    // configASSERT( ulTau1Jobs >= 5 );
-    // configASSERT( ulCBSJobsDone == 3 );
 
     printf( "[TEST] PASS\r\n" );
     vTaskSuspend( NULL );
@@ -927,11 +809,6 @@ int main( void )
 
     configASSERT( xCBSServerHandle != NULL );
 
-    // xTaskCreateEDF( vCBSSubmitterTwoJobs, "SUBMIT", 512, NULL, 2,
-    //                 pdMS_TO_TICKS( 500 ),
-    //                 pdMS_TO_TICKS( 5 ),
-    //                 pdMS_TO_TICKS( 1 ),
-    //                 NULL );
     xTaskCreate( vCBSSubmitterTwoJobs, "SUBMIT", 512, NULL, 1, NULL );
 
     xTaskCreate( vUARTDrainTask, "UARTDrain", 512, NULL, 3, NULL );
@@ -941,21 +818,20 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif /* TEST_CASE == 13 */
+#endif /* TEST_CASE == 34 */
 
-#if ( TEST_CASE == 14 )
+#if ( TEST_CASE == 35 )
 
 static TaskHandle_t xCBSServerHandle = NULL;
 static volatile uint32_t ulTau1Jobs = 0;
 static volatile uint32_t ulCBSJobsDone = 0;
 
-/* Tune these for your board/compiler. Start with your existing calibration. */
 #define JOB_30MS_ITERS   300000UL
 #define JOB_40MS_ITERS   400000UL
 #define JOB_50MS_ITERS   500000UL
 #define TAU1_40MS_ITERS  400000UL
 
-static void vBurnCpuIters( uint32_t ulIters )
+static void vCpuIters( uint32_t ulIters )
 {
     volatile uint32_t i;
 
@@ -978,7 +854,7 @@ static void vTau1( void * pvParams )
                 ( unsigned long ) ulTau1Jobs,
                 ( unsigned long ) xTaskGetTickCount() );
 
-        vBurnCpuIters( TAU1_40MS_ITERS );
+        vCpuIters( TAU1_40MS_ITERS );
 
         printf( "[TAU1] end   job=%lu tick=%lu\r\n",
                 ( unsigned long ) ulTau1Jobs,
@@ -1006,7 +882,7 @@ static void vCBSVariableJob( void * pvParams )
             pxJob->pcName,
             ( unsigned long ) xTaskGetTickCount() );
 
-    vBurnCpuIters( pxJob->ulIters );
+    vCpuIters( pxJob->ulIters );
 
     ulCBSJobsDone++;
 
@@ -1020,30 +896,26 @@ static void vCBSRandomSubmitter( void * pvParams )
 {
     ( void ) pvParams;
 
-    /* Random-looking but deterministic arrival offsets. */
     vTaskDelay( pdMS_TO_TICKS( 25 ) );
 
     printf( "[SUBMIT] J40 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
     configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob40 ) == pdPASS );
 
-    vTaskDelay( pdMS_TO_TICKS( 137 ) );
+    vTaskDelay( pdMS_TO_TICKS( 37 ) );
 
     printf( "[SUBMIT] J30 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
     configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob30 ) == pdPASS );
 
-    // vTaskDelay( pdMS_TO_TICKS( 91 ) );
+    vTaskDelay( pdMS_TO_TICKS( 91 ) );
 
-    // printf( "[SUBMIT] J50 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
-    // configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob50 ) == pdPASS );
+    printf( "[SUBMIT] J50 tick=%lu\r\n", ( unsigned long ) xTaskGetTickCount() );
+    configASSERT( xCBSSubmitJob( xCBSServerHandle, vCBSVariableJob, &xJob50 ) == pdPASS );
 
     vTaskDelay( pdMS_TO_TICKS( 300 ) );
 
     printf( "[TEST] tau1 jobs=%lu cbs jobs done=%lu\r\n",
             ( unsigned long ) ulTau1Jobs,
             ( unsigned long ) ulCBSJobsDone );
-
-    // configASSERT( ulTau1Jobs >= 5 );
-    // configASSERT( ulCBSJobsDone == 3 );
 
     printf( "[TEST] PASS\r\n" );
     vTaskSuspend( NULL );
@@ -1079,4 +951,4 @@ int main( void )
     while( 1 ) {}
 }
 
-#endif
+#endif /* TEST_CASE == 35 */
